@@ -1,8 +1,27 @@
 "use client";
 
 import Image from "next/image";
-import { type FormEvent, useState } from "react";
+import {
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { macedonianCities } from "./location-data";
+import {
+  agencyPartners,
+  developerPartners,
+  initialListings,
+  propertyTypes,
+  skopjeMunicipalities,
+  type ConstructionState,
+  type Listing,
+  type ListingIntent,
+  type ListingStatus,
+  type PropertyType,
+  type PublisherType,
+} from "./market-data";
 
 type IconName =
   | "arrow"
@@ -10,28 +29,66 @@ type IconName =
   | "check"
   | "chevron"
   | "close"
+  | "eye"
+  | "filter"
   | "heart"
   | "home"
   | "key"
   | "land"
+  | "map"
   | "menu"
   | "pin"
-  | "search";
+  | "search"
+  | "trash"
+  | "user";
 
-type Listing = {
-  id: string;
-  label: string;
-  publisher: PublisherType;
-  title: string;
-  location: string;
-  details: string;
-  price: string;
-  priceNote?: string;
-  imagePosition: string;
+type PublisherFilter = PublisherType | "all";
+type PropertyFilter = PropertyType | "all";
+type MapTool = "radius" | "polygon";
+
+type MapPoint = { x: number; y: number };
+
+type MapFilter = {
+  tool: MapTool;
+  center: MapPoint | null;
+  radius: number;
+  polygon: MapPoint[];
 };
 
-type PublisherType = "agency" | "developer" | "owner";
-type PublisherFilter = PublisherType | "all";
+type AdvancedFilters = {
+  municipality: string;
+  neighborhood: string;
+  construction: "all" | ConstructionState;
+  minArea: string;
+  maxArea: string;
+  floor: "all" | "lower" | "upper";
+  elevator: "all" | "yes" | "no";
+  parking: "all" | "yes";
+  heating: string;
+  cooling: string;
+};
+
+type SearchSnapshot = {
+  city: string;
+  propertyType: PropertyFilter;
+  publisherType: PublisherFilter;
+  intent: ListingIntent;
+  advanced: AdvancedFilters;
+  map: MapFilter;
+};
+
+type PublishForm = {
+  title: string;
+  propertyType: PropertyType;
+  intent: ListingIntent;
+  publisherType: PublisherType;
+  price: string;
+  address: string;
+  municipality: string;
+  neighborhood: string;
+  construction: ConstructionState;
+  year: string;
+};
 
 const publisherLabels: Record<PublisherFilter, string> = {
   all: "Сите огласувачи",
@@ -47,59 +104,127 @@ const publisherOptions: Array<{ value: PublisherFilter; label: string }> = [
   { value: "owner", label: publisherLabels.owner },
 ];
 
-const propertyTypes = ["Стан", "Куќа", "Деловен простор", "Парцела"];
-
-const categoryToType: Record<string, string> = {
-  Станови: "Стан",
-  Куќи: "Куќа",
-  "Деловни простори": "Деловен простор",
-  Парцели: "Парцела",
-};
+const propertyOptions: Array<{ value: PropertyFilter; label: string }> = [
+  { value: "all", label: "Сите типови" },
+  ...propertyTypes.map((type) => ({ value: type, label: type })),
+];
 
 const categories: Array<{
   name: string;
   description: string;
+  type: PropertyFilter;
   icon: IconName;
 }> = [
-  { name: "Станови", description: "За секојдневие во градот", icon: "building" },
-  { name: "Куќи", description: "Повеќе простор за вас", icon: "home" },
-  { name: "Деловни простори", description: "Место за следната идеја", icon: "key" },
-  { name: "Парцели", description: "Почеток за вашиот проект", icon: "land" },
+  { name: "Станови", description: "За секојдневие во градот", type: "Стан", icon: "building" },
+  { name: "Куќи", description: "Повеќе простор за вас", type: "Куќа", icon: "home" },
+  { name: "Соби", description: "Практично за студенти", type: "Соба", icon: "key" },
+  { name: "Гаражи", description: "Сигурно место за возило", type: "Гаража", icon: "land" },
 ];
 
-const listings: Listing[] = [
-  {
-    id: "aerodrom",
-    label: "Проверен оглас",
-    publisher: "agency",
-    title: "Панорамски стан во Аеродром",
-    location: "Аеродром, Скопје",
-    details: "92 m²  ·  3 спални  ·  6/8 кат",
-    price: "142.000 €",
-    imagePosition: "53% center",
-  },
-  {
-    id: "karposh",
-    label: "Ново",
-    publisher: "developer",
-    title: "Мирен дом покрај Градски парк",
-    location: "Карпош, Скопје",
-    details: "74 m²  ·  2 спални  ·  3/5 кат",
-    price: "126.500 €",
-    imagePosition: "70% center",
-  },
-  {
-    id: "vodno",
-    label: "Издвоено",
-    publisher: "owner",
-    title: "Современ стан со многу светлина",
-    location: "Водно, Скопје",
-    details: "108 m²  ·  3 спални  ·  2/4 кат",
-    price: "980 €",
-    priceNote: "/ месечно",
-    imagePosition: "83% center",
-  },
-];
+function createEmptyAdvancedFilters(): AdvancedFilters {
+  return {
+    municipality: "",
+    neighborhood: "",
+    construction: "all",
+    minArea: "",
+    maxArea: "",
+    floor: "all",
+    elevator: "all",
+    parking: "all",
+    heating: "all",
+    cooling: "all",
+  };
+}
+
+function createEmptyMapFilter(): MapFilter {
+  return { tool: "radius", center: null, radius: 18, polygon: [] };
+}
+
+function createEmptyPublishForm(): PublishForm {
+  return {
+    title: "",
+    propertyType: "Стан",
+    intent: "sale",
+    publisherType: "owner",
+    price: "",
+    address: "",
+    municipality: "Аеродром",
+    neighborhood: "Јане Сандански",
+    construction: "built",
+    year: "",
+  };
+}
+
+function formatEuro(value: number) {
+  return value.toLocaleString("mk-MK") + " €";
+}
+
+function pricePerSquareMeter(listing: Listing) {
+  return Math.round(listing.priceEur / listing.areaM2);
+}
+
+function constructionLabel(listing: Listing) {
+  if (listing.construction === "in_progress") return "ВО ТЕК НА ГРАДБА";
+  return "Изграден " + (listing.builtYear ?? "");
+}
+
+function statusLabel(status: ListingStatus) {
+  if (status === "approved") return "Одобрен";
+  if (status === "pending") return "Чека проверка";
+  return "Одбиен";
+}
+
+function pointInsidePolygon(point: MapPoint, polygon: MapPoint[]) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const currentPoint = polygon[index];
+    const previousPoint = polygon[previous];
+    const intersects =
+      currentPoint.y > point.y !== previousPoint.y > point.y &&
+      point.x <
+        ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
+          (previousPoint.y - currentPoint.y) +
+          currentPoint.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function matchesMap(listing: Listing, map: MapFilter) {
+  if (map.tool === "radius" && map.center) {
+    const distance = Math.hypot(listing.map.x - map.center.x, listing.map.y - map.center.y);
+    return distance <= map.radius;
+  }
+  if (map.tool === "polygon" && map.polygon.length >= 3) {
+    return pointInsidePolygon(listing.map, map.polygon);
+  }
+  return true;
+}
+
+function matchesSearch(listing: Listing, search: SearchSnapshot) {
+  const minArea = Number(search.advanced.minArea);
+  const maxArea = Number(search.advanced.maxArea);
+  const floorNumber = Number.parseInt(listing.floor ?? "", 10);
+
+  if (listing.status !== "approved") return false;
+  if (listing.city !== search.city) return false;
+  if (listing.intent !== search.intent) return false;
+  if (search.propertyType !== "all" && listing.propertyType !== search.propertyType) return false;
+  if (search.publisherType !== "all" && listing.publisherType !== search.publisherType) return false;
+  if (search.advanced.municipality && listing.municipality !== search.advanced.municipality) return false;
+  if (search.advanced.neighborhood && listing.neighborhood !== search.advanced.neighborhood) return false;
+  if (search.advanced.construction !== "all" && listing.construction !== search.advanced.construction) return false;
+  if (Number.isFinite(minArea) && minArea > 0 && listing.areaM2 < minArea) return false;
+  if (Number.isFinite(maxArea) && maxArea > 0 && listing.areaM2 > maxArea) return false;
+  if (search.advanced.elevator === "yes" && !listing.elevator) return false;
+  if (search.advanced.elevator === "no" && listing.elevator) return false;
+  if (search.advanced.parking === "yes" && listing.parking === "Не е достапно") return false;
+  if (search.advanced.heating !== "all" && listing.heating !== search.advanced.heating) return false;
+  if (search.advanced.cooling !== "all" && listing.cooling !== search.advanced.cooling) return false;
+  if (search.advanced.floor === "lower" && (!Number.isFinite(floorNumber) || floorNumber > 3)) return false;
+  if (search.advanced.floor === "upper" && (!Number.isFinite(floorNumber) || floorNumber < 4)) return false;
+  return matchesMap(listing, search.map);
+}
 
 function Icon({
   name,
@@ -122,676 +247,458 @@ function Icon({
     "aria-hidden": true,
   };
 
-  if (name === "search") {
-    return (
-      <svg {...shared}>
-        <circle cx="11" cy="11" r="6.5" />
-        <path d="m16 16 4 4" />
-      </svg>
-    );
-  }
+  if (name === "search") return <svg {...shared}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></svg>;
+  if (name === "pin") return <svg {...shared}><path d="M20 10c0 5.2-8 10-8 10s-8-4.8-8-10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.3" /></svg>;
+  if (name === "heart") return <svg {...shared} fill={filled ? "currentColor" : "none"}><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z" /></svg>;
+  if (name === "arrow") return <svg {...shared}><path d="M5 12h13" /><path d="m13 6 6 6-6 6" /></svg>;
+  if (name === "chevron") return <svg {...shared}><path d="m7 10 5 5 5-5" /></svg>;
+  if (name === "menu") return <svg {...shared}><path d="M4 7h16M4 12h16M4 17h16" /></svg>;
+  if (name === "close") return <svg {...shared}><path d="m6 6 12 12M18 6 6 18" /></svg>;
+  if (name === "check") return <svg {...shared}><path d="m5 12 4.2 4.2L19 6.5" /></svg>;
+  if (name === "eye") return <svg {...shared}><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.6" /></svg>;
+  if (name === "filter") return <svg {...shared}><path d="M4 5h16M7 12h10M10 19h4" /></svg>;
+  if (name === "map") return <svg {...shared}><path d="m3.5 5.5 5-2 7 2.5 5-2v14l-5 2-7-2.5-5 2v-14Z" /><path d="M8.5 3.5v14M15.5 6v14" /></svg>;
+  if (name === "trash") return <svg {...shared}><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>;
+  if (name === "user") return <svg {...shared}><circle cx="12" cy="8" r="3.5" /><path d="M4.5 21a7.5 7.5 0 0 1 15 0" /></svg>;
+  if (name === "building") return <svg {...shared}><path d="M4 21V5.5A1.5 1.5 0 0 1 5.5 4h9A1.5 1.5 0 0 1 16 5.5V21" /><path d="M16 10h2.5A1.5 1.5 0 0 1 20 11.5V21M8 8h4M8 12h4M8 16h4M11 21v-2.5" /></svg>;
+  if (name === "home") return <svg {...shared}><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1v-9Z" /><path d="M9 21v-6h6v6" /></svg>;
+  if (name === "key") return <svg {...shared}><circle cx="8.5" cy="15.5" r="3.5" /><path d="m11 13 8-8M16 8l2 2M14 10l2 2" /></svg>;
+  return <svg {...shared}><path d="M4 20.5h16M6.5 20.5V9.2l5.5-4.5 5.5 4.5v11.3M9 20.5v-6h6v6" /><path d="M4.5 9.2 12 3l7.5 6.2" /></svg>;
+}
 
-  if (name === "pin") {
-    return (
-      <svg {...shared}>
-        <path d="M20 10c0 5.2-8 10-8 10s-8-4.8-8-10a8 8 0 1 1 16 0Z" />
-        <circle cx="12" cy="10" r="2.3" />
-      </svg>
-    );
-  }
-
-  if (name === "heart") {
-    return (
-      <svg {...shared} fill={filled ? "currentColor" : "none"}>
-        <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.9-8.6a5.5 5.5 0 0 0-.1-7.8Z" />
-      </svg>
-    );
-  }
-
-  if (name === "arrow") {
-    return (
-      <svg {...shared}>
-        <path d="M5 12h13" />
-        <path d="m13 6 6 6-6 6" />
-      </svg>
-    );
-  }
-
-  if (name === "chevron") {
-    return (
-      <svg {...shared}>
-        <path d="m7 10 5 5 5-5" />
-      </svg>
-    );
-  }
-
-  if (name === "menu") {
-    return (
-      <svg {...shared}>
-        <path d="M4 7h16M4 12h16M4 17h16" />
-      </svg>
-    );
-  }
-
-  if (name === "close") {
-    return (
-      <svg {...shared}>
-        <path d="m6 6 12 12M18 6 6 18" />
-      </svg>
-    );
-  }
-
-  if (name === "check") {
-    return (
-      <svg {...shared}>
-        <path d="m5 12 4.2 4.2L19 6.5" />
-      </svg>
-    );
-  }
-
-  if (name === "building") {
-    return (
-      <svg {...shared}>
-        <path d="M4 21V5.5A1.5 1.5 0 0 1 5.5 4h9A1.5 1.5 0 0 1 16 5.5V21" />
-        <path d="M16 10h2.5A1.5 1.5 0 0 1 20 11.5V21M8 8h4M8 12h4M8 16h4M11 21v-2.5" />
-      </svg>
-    );
-  }
-
-  if (name === "home") {
-    return (
-      <svg {...shared}>
-        <path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9Z" />
-        <path d="M9 21v-6h6v6" />
-      </svg>
-    );
-  }
-
-  if (name === "key") {
-    return (
-      <svg {...shared}>
-        <circle cx="8.5" cy="15.5" r="3.5" />
-        <path d="m11 13 8-8M16 8l2 2M14 10l2 2" />
-      </svg>
-    );
-  }
-
+function ListingCard({
+  listing,
+  favorite,
+  onFavorite,
+  onOpen,
+}: {
+  listing: Listing;
+  favorite: boolean;
+  onFavorite: () => void;
+  onOpen: () => void;
+}) {
   return (
-    <svg {...shared}>
-      <path d="M4 20.5h16M6.5 20.5V9.2l5.5-4.5 5.5 4.5v11.3M9 20.5v-6h6v6" />
-      <path d="M4.5 9.2 12 3l7.5 6.2" />
-    </svg>
+    <article className="listing-card listing-card--rich">
+      <div className="listing-card__media">
+        <Image src="/images/doma-hero.png" alt="" fill sizes="(max-width: 720px) 100vw, (max-width: 960px) 50vw, 33vw" className="listing-card__photo" style={{ objectPosition: listing.photoPosition }} />
+        <div className="listing-card__shade" />
+        <span className={listing.construction === "in_progress" ? "listing-card__badge listing-card__badge--build" : "listing-card__badge"}>{listing.badge ?? "ДЕМО ОГЛАС"}</span>
+        <button className={favorite ? "heart-button is-favorite" : "heart-button"} type="button" aria-label={favorite ? "Отстрани од омилени" : "Додај во омилени"} aria-pressed={favorite} onClick={onFavorite}><Icon name="heart" size={18} filled={favorite} /></button>
+      </div>
+      <div className="listing-card__body">
+        <div className="listing-card__card-topline"><p className="listing-card__location"><Icon name="pin" size={15} />{listing.municipality + " · " + listing.neighborhood}</p><span className="listing-card__type">{listing.propertyType}</span></div>
+        <h3>{listing.title}</h3>
+        <p className="listing-card__address"><Icon name="pin" size={14} />Демо адреса: {listing.address}</p>
+        <p className="listing-card__details">{listing.areaM2 + " m²"}{listing.rooms ? " · " + listing.rooms + " соби" : ""}{listing.floor ? " · " + listing.floor + " кат" : ""}</p>
+        <div className="listing-card__property-row"><span>{constructionLabel(listing)}</span><span>{listing.elevator ? "Лифт" : "Без лифт"}</span></div>
+        <p className="listing-card__publisher"><span>{publisherLabels[listing.publisherType]}</span>{listing.publisherName}</p>
+        <div className="listing-card__footer"><p><strong>{formatEuro(listing.priceEur)}</strong><span>{listing.intent === "rent" ? "/ месечно" : ""}</span><small>{pricePerSquareMeter(listing) + " €/m²" + (listing.intent === "rent" ? " месечно" : "")}</small></p><button className="listing-card__view" type="button" aria-label="Отвори детали за огласот" onClick={onOpen}><Icon name="arrow" size={18} /></button></div>
+      </div>
+    </article>
   );
 }
 
 export default function HomeClient() {
-  const [mode, setMode] = useState<"buy" | "rent">("buy");
+  const [mode, setMode] = useState<ListingIntent>("sale");
   const [selectedCity, setSelectedCity] = useState("Скопје");
-  const [propertyType, setPropertyType] = useState("Стан");
-  const [budget, setBudget] = useState("До 150.000 €");
+  const [propertyType, setPropertyType] = useState<PropertyFilter>("Стан");
   const [publisherType, setPublisherType] = useState<PublisherFilter>("all");
+  const [advanced, setAdvanced] = useState<AdvancedFilters>(createEmptyAdvancedFilters);
+  const [mapFilter, setMapFilter] = useState<MapFilter>(createEmptyMapFilter);
+  const [appliedSearch, setAppliedSearch] = useState<SearchSnapshot | null>(null);
+  const [listingInventory, setListingInventory] = useState<Listing[]>(initialListings);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountCreated, setAccountCreated] = useState(false);
+  const [accountTab, setAccountTab] = useState<"overview" | "listings" | "offers" | "saved">("overview");
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishForm, setPublishForm] = useState<PublishForm>(createEmptyPublishForm);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminFilter, setAdminFilter] = useState<ListingStatus | "all">("pending");
+  const [detailListingId, setDetailListingId] = useState<string | null>(null);
+  const [mapFocusId, setMapFocusId] = useState<string | null>(null);
+  const [isDrawingMap, setIsDrawingMap] = useState(false);
+  const mapRef = useRef<SVGSVGElement>(null);
 
-  const searchLabel = mode === "buy" ? "Купување" : "Изнајмување";
-  const visibleListings = listings.filter(
-    (listing) => publisherType === "all" || listing.publisher === publisherType,
+  const searchLabel = mode === "sale" ? "Купување" : "Изнајмување";
+  const selectedMunicipality = skopjeMunicipalities.find((item) => item.name === advanced.municipality);
+  const visibleNeighborhoods = selectedMunicipality?.neighborhoods ?? [];
+  const selectedDetail = listingInventory.find((listing) => listing.id === detailListingId) ?? null;
+  const draftSearch = useMemo<SearchSnapshot>(
+    () => ({ city: selectedCity, propertyType, publisherType, intent: mode, advanced, map: mapFilter }),
+    [selectedCity, propertyType, publisherType, mode, advanced, mapFilter],
   );
 
-  function scrollToListings() {
-    document.getElementById("oglasi")?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
+  const previewListings = useMemo(
+    () => listingInventory.filter((listing) => matchesSearch(listing, draftSearch)),
+    [listingInventory, draftSearch],
+  );
+  const filteredListings = useMemo(() => {
+    if (!appliedSearch) return listingInventory.filter((listing) => listing.status === "approved");
+    return listingInventory.filter((listing) => matchesSearch(listing, appliedSearch));
+  }, [listingInventory, appliedSearch]);
+  const marketAverage = useMemo(() => {
+    if (!advanced.municipality) return null;
+    const scopedListings = listingInventory.filter((listing) => {
+      const neighborhoodMatches = !advanced.neighborhood || listing.neighborhood === advanced.neighborhood;
+      return listing.status === "approved" && listing.city === selectedCity && listing.intent === mode && listing.municipality === advanced.municipality && neighborhoodMatches && listing.areaM2 > 0;
     });
-  }
+    if (scopedListings.length === 0) return { count: 0, value: 0 };
+    return { count: scopedListings.length, value: Math.round(scopedListings.reduce((sum, listing) => sum + pricePerSquareMeter(listing), 0) / scopedListings.length) };
+  }, [listingInventory, selectedCity, mode, advanced.municipality, advanced.neighborhood]);
+  const adminListings = listingInventory.filter((listing) => adminFilter === "all" || listing.status === adminFilter);
+  const mapBaseSearch = useMemo<SearchSnapshot>(
+    () => ({ ...draftSearch, map: createEmptyMapFilter() }),
+    [draftSearch],
+  );
+  const mapPins = useMemo(
+    () => listingInventory.filter((listing) => listing.city === "Скопје" && matchesSearch(listing, mapBaseSearch)),
+    [listingInventory, mapBaseSearch],
+  );
+  const focusedMapListing = mapPins.find((listing) => listing.id === mapFocusId) ?? null;
 
+  function scrollToListings() {
+    document.getElementById("oglasi")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    setNotice(
-      `Демо пребарување: ${searchLabel.toLowerCase()} на ${propertyType.toLowerCase()} во ${selectedCity}, со буџет ${budget}${publisherType === "all" ? "" : `. Огласувач: ${publisherLabels[publisherType]}`}.`,
-    );
-    scrollToListings();
+    setNotice("");
+    setAdvancedOpen(true);
   }
-
-  function selectCategory(category: string) {
-    setPropertyType(categoryToType[category] ?? "Стан");
-    setNotice(`Подготвивме демо избор за: ${category.toLowerCase()}.`);
-    scrollToListings();
+  function applyAdvancedFilters() {
+    const snapshot: SearchSnapshot = {
+      city: selectedCity,
+      propertyType,
+      publisherType,
+      intent: mode,
+      advanced: { ...advanced },
+      map: { tool: mapFilter.tool, center: mapFilter.center ? { ...mapFilter.center } : null, radius: mapFilter.radius, polygon: mapFilter.polygon.map((point) => ({ ...point })) },
+    };
+    setAppliedSearch(snapshot);
+    setAdvancedOpen(false);
+    setNotice("Прикажуваме " + previewListings.length + " демо огласи според избраните критериуми.");
+    window.setTimeout(scrollToListings, 80);
   }
-
+  function resetAdvancedFilters() {
+    setAdvanced(createEmptyAdvancedFilters());
+    setMapFilter(createEmptyMapFilter());
+    setMapFocusId(null);
+  }
+  function selectCategory(type: PropertyFilter) {
+    setPropertyType(type);
+    setAppliedSearch(null);
+    setNotice("Избран е типот: " + (type === "all" ? "сите типови" : type.toLowerCase()) + ". Додадете детали со „Продолжи“.");
+    window.setTimeout(scrollToListings, 50);
+  }
   function toggleFavorite(id: string) {
-    setFavorites((current) =>
-      current.includes(id)
-        ? current.filter((favoriteId) => favoriteId !== id)
-        : [...current, id],
-    );
+    setFavorites((current) => current.includes(id) ? current.filter((favoriteId) => favoriteId !== id) : [...current, id]);
   }
-
-  function showPublishMessage() {
-    setNotice(
-      "Следниот чекор е форма за објавување оглас, профил за агенција и верификација на содржината.",
-    );
+  function updateAdvanced<K extends keyof AdvancedFilters>(key: K, value: AdvancedFilters[K]) {
+    setAdvanced((current) => ({ ...current, [key]: value }));
+  }
+  function chooseMunicipality(value: string) {
+    setAdvanced((current) => ({ ...current, municipality: value, neighborhood: "" }));
+  }
+  function setMapTool(tool: MapTool) {
+    setMapFilter((current) => ({ ...current, tool, center: tool === "radius" ? current.center : null, polygon: tool === "polygon" ? current.polygon : [] }));
+    setMapFocusId(null);
+  }
+  function getMapPoint(event: ReactPointerEvent<SVGSVGElement>): MapPoint {
+    const bounds = mapRef.current?.getBoundingClientRect();
+    if (!bounds) return { x: 50, y: 35 };
+    return { x: Math.max(0, Math.min(100, ((event.clientX - bounds.left) / bounds.width) * 100)), y: Math.max(0, Math.min(70, ((event.clientY - bounds.top) / bounds.height) * 70)) };
+  }
+  function handleMapPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
+    if (selectedCity !== "Скопје") return;
+    const point = getMapPoint(event);
+    if (mapFilter.tool === "radius") {
+      setMapFilter((current) => ({ ...current, center: point }));
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setMapFocusId(null);
+    setMapFilter((current) => ({ ...current, polygon: [point] }));
+    setIsDrawingMap(true);
+  }
+  function handleMapPointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+    if (!isDrawingMap || mapFilter.tool !== "polygon") return;
+    const point = getMapPoint(event);
+    setMapFilter((current) => {
+      const lastPoint = current.polygon[current.polygon.length - 1];
+      if (lastPoint && Math.hypot(lastPoint.x - point.x, lastPoint.y - point.y) < 1.4) return current;
+      return { ...current, polygon: [...current.polygon, point] };
+    });
+  }
+  function handleMapPointerUp(event: ReactPointerEvent<SVGSVGElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setIsDrawingMap(false);
+  }
+  function handlePublish(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const price = Number(publishForm.price);
+    if (!Number.isFinite(price) || price <= 0) {
+      setNotice("Внесете валидна точна цена за огласот.");
+      return;
+    }
+    const neighborhood = publishForm.neighborhood || "Непрецизирана населба";
+    const municipality = publishForm.municipality || "Непрецизирана општина";
+    const newListing: Listing = {
+      id: "local-" + Date.now(),
+      title: publishForm.title || publishForm.propertyType + " во " + neighborhood,
+      intent: publishForm.intent,
+      propertyType: publishForm.propertyType,
+      publisherType: publishForm.publisherType,
+      publisherName: "Мој демо профил",
+      city: selectedCity,
+      municipality,
+      neighborhood,
+      address: publishForm.address,
+      priceEur: price,
+      areaM2: 60,
+      rooms: 2,
+      floor: "Не е внесено",
+      elevator: false,
+      parking: "Не е достапно",
+      heating: "Не е внесено",
+      cooling: "Не е внесено",
+      construction: publishForm.construction,
+      builtYear: publishForm.construction === "built" ? Number(publishForm.year) || undefined : undefined,
+      completionText: publishForm.construction === "in_progress" ? "Рокот ќе се внесе при проверка" : undefined,
+      views: 0,
+      status: "pending",
+      photoPosition: "50% center",
+      map: { x: 50, y: 45 },
+      features: ["Локално создаден демо оглас"],
+      badge: "ЧЕКА ПРОВЕРКА",
+    };
+    setListingInventory((current) => [newListing, ...current]);
+    setPublishOpen(false);
+    setPublishForm(createEmptyPublishForm());
+    setNotice("Демо огласот е додаден со точна цена и адреса и сега чека админ-проверка.");
+  }
+  function updateListingStatus(id: string, status: ListingStatus) {
+    setListingInventory((current) => current.map((listing) => listing.id === id ? { ...listing, status } : listing));
+    setNotice("Статусот на демо огласот е променет во: " + statusLabel(status) + ".");
+  }
+  function deleteListing(id: string) {
+    setListingInventory((current) => current.filter((listing) => listing.id !== id));
+    setNotice("Демо огласот е избришан од локалниот админ-преглед.");
+  }
+  function filterByPartner(type: PublisherType) {
+    setPublisherType(type);
+    setAppliedSearch({ city: selectedCity, propertyType: "all", publisherType: type, intent: mode, advanced: createEmptyAdvancedFilters(), map: createEmptyMapFilter() });
+    setNotice("Ги прикажуваме демо огласите од избраниот тип огласувач.");
+    window.setTimeout(scrollToListings, 70);
   }
 
   return (
     <div className="doma-app">
       <header className="doma-header">
         <div className="doma-shell doma-header__inner">
-          <a className="doma-logo" href="#pocetna" aria-label="DOMA, почетна">
-            <span className="doma-logo__mark" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-            DOMA
-          </a>
-
+          <a className="doma-logo" href="#pocetna" aria-label="DOMA, почетна"><span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>DOMA</a>
           <nav className="doma-nav" aria-label="Главна навигација">
-            <a href="#oglasi" onClick={() => setMode("buy")}>Купи</a>
+            <a href="#oglasi" onClick={() => setMode("sale")}>Купи</a>
             <a href="#oglasi" onClick={() => setMode("rent")}>Изнајми</a>
-            <a href="#kategorii">Новоградба</a>
-            <a href="#za-agencii">За агенции</a>
+            <a href="#partneri">Партнери</a>
+            <button type="button" className="doma-nav__button" onClick={() => setAdminOpen(true)}>Админ демо</button>
           </nav>
-
           <div className="doma-header__actions">
-            <button className="button button--quiet" type="button" onClick={showPublishMessage}>
-              Објави оглас
-            </button>
-            <button
-              className="button button--header"
-              type="button"
-              onClick={() => setNotice("Најавувањето ќе биде додадено со профили и зачувани пребарувања.")}
-            >
-              Најави се
-            </button>
+            <button className="button button--quiet" type="button" onClick={() => setPublishOpen(true)}>Објави оглас</button>
+            <button className="button button--header" type="button" onClick={() => setAccountOpen(true)}>Најави се</button>
           </div>
-
-          <button
-            className="doma-menu-button"
-            type="button"
-            aria-label={menuOpen ? "Затвори мени" : "Отвори мени"}
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            <Icon name={menuOpen ? "close" : "menu"} size={22} />
-          </button>
+          <button className="doma-menu-button" type="button" aria-label={menuOpen ? "Затвори мени" : "Отвори мени"} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? "close" : "menu"} size={22} /></button>
         </div>
-
         {menuOpen && (
           <nav className="doma-mobile-nav" aria-label="Мобилна навигација">
-            <a href="#oglasi" onClick={() => { setMode("buy"); setMenuOpen(false); }}>Купи</a>
+            <a href="#oglasi" onClick={() => { setMode("sale"); setMenuOpen(false); }}>Купи</a>
             <a href="#oglasi" onClick={() => { setMode("rent"); setMenuOpen(false); }}>Изнајми</a>
-            <a href="#kategorii" onClick={() => setMenuOpen(false)}>Новоградба</a>
-            <a href="#za-agencii" onClick={() => setMenuOpen(false)}>За агенции</a>
-            <button className="button button--primary" type="button" onClick={() => { showPublishMessage(); setMenuOpen(false); }}>
-              Објави оглас
-            </button>
+            <a href="#partneri" onClick={() => setMenuOpen(false)}>Партнери</a>
+            <button className="button button--primary" type="button" onClick={() => { setPublishOpen(true); setMenuOpen(false); }}>Објави оглас</button>
+            <button className="button button--ghost-light" type="button" onClick={() => { setAdminOpen(true); setMenuOpen(false); }}>Админ демо</button>
           </nav>
         )}
       </header>
 
       <main id="pocetna">
         <section className="doma-hero" aria-labelledby="hero-title">
-          <div className="doma-hero__image" aria-hidden="true">
-            <Image
-              src="/images/doma-hero.png"
-              alt=""
-              fill
-              priority
-              sizes="100vw"
-              className="doma-hero__photo"
-            />
-          </div>
+          <div className="doma-hero__image" aria-hidden="true"><Image src="/images/doma-hero.png" alt="" fill priority sizes="100vw" className="doma-hero__photo" /></div>
           <div className="doma-shell doma-hero__content">
             <p className="eyebrow eyebrow--light">НЕДВИЖНОСТИ ВО МАКЕДОНИЈА</p>
-            <h1 id="hero-title">Местото каде што почнува вашиот следен дом.</h1>
-            <p className="doma-hero__intro">
-              Откријте внимателно избрани имоти за купување и изнајмување —
-              јасно, мирно и на едно место.
-            </p>
-
+            <h1 id="hero-title">Почнете едноставно. Пребарајте прецизно.</h1>
+            <p className="doma-hero__intro">Прво изберете град, тип на имот и огласувач. Во вториот чекор добивате локација, детали и мапа — без филтер за буџет.</p>
             <form className="search-panel" onSubmit={handleSearch}>
               <div className="search-panel__top">
                 <div className="mode-switch" role="group" aria-label="Тип на пребарување">
-                  <button
-                    className={mode === "buy" ? "mode-switch__button is-active" : "mode-switch__button"}
-                    type="button"
-                    aria-pressed={mode === "buy"}
-                    onClick={() => setMode("buy")}
-                  >
-                    Купување
-                  </button>
-                  <button
-                    className={mode === "rent" ? "mode-switch__button is-active" : "mode-switch__button"}
-                    type="button"
-                    aria-pressed={mode === "rent"}
-                    onClick={() => setMode("rent")}
-                  >
-                    Изнајмување
-                  </button>
+                  <button className={mode === "sale" ? "mode-switch__button is-active" : "mode-switch__button"} type="button" aria-pressed={mode === "sale"} onClick={() => setMode("sale")}>Купување</button>
+                  <button className={mode === "rent" ? "mode-switch__button is-active" : "mode-switch__button"} type="button" aria-pressed={mode === "rent"} onClick={() => setMode("rent")}>Изнајмување</button>
                 </div>
-                <span className="search-panel__mode-label">{searchLabel}</span>
+                <span className="search-panel__mode-label">Чекор 1 од 2 · {searchLabel}</span>
               </div>
-
               <div className="search-panel__fields">
-                <label className="search-field search-field--location">
-                  <span>Град</span>
-                  <span className="search-field__control">
-                    <Icon name="pin" size={18} />
-                    <select value={selectedCity} onChange={(event) => setSelectedCity(event.target.value)} aria-label="Град">
-                      {macedonianCities.map((city) => <option key={city}>{city}</option>)}
-                    </select>
-                    <Icon name="chevron" size={16} />
-                  </span>
-                </label>
-
-                <label className="search-field">
-                  <span>Тип на имот</span>
-                  <span className="search-field__control">
-                    <select value={propertyType} onChange={(event) => setPropertyType(event.target.value)} aria-label="Тип на имот">
-                      {propertyTypes.map((type) => <option key={type}>{type}</option>)}
-                    </select>
-                    <Icon name="chevron" size={16} />
-                  </span>
-                </label>
-
-                <label className="search-field">
-                  <span>Буџет</span>
-                  <span className="search-field__control">
-                    <select value={budget} onChange={(event) => setBudget(event.target.value)} aria-label="Буџет">
-                      <option>До 100.000 €</option>
-                      <option>До 150.000 €</option>
-                      <option>До 250.000 €</option>
-                      <option>По договор</option>
-                    </select>
-                    <Icon name="chevron" size={16} />
-                  </span>
-                </label>
-
-                <label className="search-field search-field--publisher">
-                  <span>Објавувач</span>
-                  <span className="search-field__control">
-                    <select
-                      value={publisherType}
-                      onChange={(event) => setPublisherType(event.target.value as PublisherFilter)}
-                      aria-label="Кој го објавува огласот"
-                    >
-                      {publisherOptions.map((publisher) => (
-                        <option key={publisher.value} value={publisher.value}>{publisher.label}</option>
-                      ))}
-                    </select>
-                    <Icon name="chevron" size={16} />
-                  </span>
-                </label>
-
-                <button className="button button--search" type="submit">
-                  <Icon name="search" size={19} />
-                  Пребарај
-                </button>
+                <label className="search-field search-field--location"><span>Град</span><span className="search-field__control"><Icon name="pin" size={18} /><select value={selectedCity} onChange={(event) => setSelectedCity(event.target.value)} aria-label="Град">{macedonianCities.map((city) => <option key={city}>{city}</option>)}</select><Icon name="chevron" size={16} /></span></label>
+                <label className="search-field"><span>Тип на имот</span><span className="search-field__control"><select value={propertyType} onChange={(event) => setPropertyType(event.target.value as PropertyFilter)} aria-label="Тип на имот">{propertyOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><Icon name="chevron" size={16} /></span></label>
+                <label className="search-field search-field--publisher"><span>Објавувач</span><span className="search-field__control"><select value={publisherType} onChange={(event) => setPublisherType(event.target.value as PublisherFilter)} aria-label="Кој го објавува огласот">{publisherOptions.map((publisher) => <option key={publisher.value} value={publisher.value}>{publisher.label}</option>)}</select><Icon name="chevron" size={16} /></span></label>
+                <button className="button button--search" type="submit">Продолжи <Icon name="arrow" size={18} /></button>
               </div>
             </form>
           </div>
-          <div className="doma-hero__bottom-note">ДЕМО ПЛАТФОРМА · СОЗДАДЕНА ЗА ЛОКАЛЕН ПАЗАР</div>
+          <div className="doma-hero__bottom-note">ДЕМО ПЛАТФОРМА · БЕЗ БУЏЕТ ВО ПОЧЕТНИОТ ИЗБОР</div>
         </section>
 
-        {/* The detailed location flow was intentionally removed in favor of city-only search.
-        {false && (
-          <div
-            className="location-dialog-backdrop"
-            role="presentation"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setLocationPickerOpen(false);
-            }}
-          >
-            <section className="location-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title">
-              <header className="location-dialog__header">
-                <div>
-                  <p>ЛОКАЦИЈА</p>
-                  <h2 id="location-dialog-title">Каде барате?</h2>
-                </div>
-                <div className="location-dialog__header-actions">
-                  {(selectedCity !== "Скопје" || selectedMunicipality || selectedSettlement) && (
-                    <button className="location-dialog__reset" type="button" onClick={resetLocation}>
-                      Ресетирај
-                    </button>
-                  )}
-                  <button
-                    ref={locationCloseButtonRef}
-                    className="location-dialog__close"
-                    type="button"
-                    aria-label="Затвори избор на локација"
-                    onClick={() => setLocationPickerOpen(false)}
-                  >
-                    <Icon name="close" size={19} />
-                  </button>
-                </div>
-              </header>
+        {notice && <div className="doma-notice-wrap" aria-live="polite"><div className="doma-notice"><Icon name="check" size={18} /><span>{notice}</span><button type="button" aria-label="Затвори известување" onClick={() => setNotice("")}><Icon name="close" size={15} /></button></div></div>}
 
-              <nav className="location-dialog__breadcrumbs" aria-label="Тек на избор на локација">
-                <button
-                  className={locationStep === "city" ? "is-current" : ""}
-                  type="button"
-                  onClick={() => setLocationStep("city")}
-                >
-                  1. {selectedCity}
-                </button>
-                {selectedCity === "Скопје" && (
-                  <>
-                    <span aria-hidden="true">›</span>
-                    <button
-                      className={locationStep === "municipality" ? "is-current" : ""}
-                      type="button"
-                      onClick={() => setLocationStep("municipality")}
-                    >
-                      2. {selectedMunicipality || "Општина"}
-                    </button>
-                    {selectedMunicipality && (
-                      <>
-                        <span aria-hidden="true">›</span>
-                        <button
-                          className={locationStep === "settlement" ? "is-current" : ""}
-                          type="button"
-                          onClick={() => setLocationStep("settlement")}
-                        >
-                          3. {selectedSettlement || "Населба"}
-                        </button>
-                      </>
-                    )}
-                  </>
-                )}
-              </nav>
-
-              <div className="location-dialog__body">
-                {locationStep === "city" && (
-                  <section aria-labelledby="city-step-title">
-                    <div className="location-dialog__step-heading">
-                      <span>ЧЕКОР 1</span>
-                      <h3 id="city-step-title">Изберете град</h3>
-                      <p>Скопје е издвоен прв; по него следи избор на општина.</p>
-                    </div>
-
-                    <button
-                      className={selectedCity === "Скопје" ? "skopje-choice is-active" : "skopje-choice"}
-                      type="button"
-                      onClick={() => chooseCity("Скопје")}
-                    >
-                      <span><Icon name="pin" size={20} /></span>
-                      <strong>Скопје</strong>
-                      <small>Главен град · 10 општини</small>
-                      <Icon name="arrow" size={18} />
-                    </button>
-
-                    <p className="location-dialog__list-label">Сите други градови</p>
-                    <div className="city-choice-grid">
-                      {macedonianCities.filter((city) => city !== "Скопје").map((city) => (
-                        <button
-                          className={selectedCity === city ? "location-choice is-active" : "location-choice"}
-                          type="button"
-                          key={city}
-                          onClick={() => chooseCity(city)}
-                        >
-                          {city}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {locationStep === "municipality" && selectedCity === "Скопје" && (
-                  <section aria-labelledby="municipality-step-title">
-                    <div className="location-dialog__step-heading">
-                      <span>ЧЕКОР 2</span>
-                      <h3 id="municipality-step-title">Изберете општина во Скопје</h3>
-                      <p>Потоа ќе ги прикажеме само населбите од избраната општина.</p>
-                    </div>
-
-                    <div className="municipality-choice-grid">
-                      {availableMunicipalities.map((municipality) => (
-                        <button
-                          className={selectedMunicipality === municipality.name ? "location-choice is-active" : "location-choice"}
-                          type="button"
-                          key={municipality.name}
-                          onClick={() => chooseMunicipality(municipality.name)}
-                        >
-                          {municipality.name}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {locationStep === "settlement" && selectedMunicipalityData && (
-                  <section aria-labelledby="settlement-step-title">
-                    <div className="location-dialog__step-heading">
-                      <span>ЧЕКОР 3</span>
-                      <h3 id="settlement-step-title">Изберете населба во {selectedMunicipalityData.name}</h3>
-                      <p>Населбата е опционална — може да пребарувате во целата општина.</p>
-                    </div>
-
-                    <div className="location-option-group">
-                      <div><strong>Градски населби</strong><span>{selectedMunicipalityData.neighborhoods.length}</span></div>
-                      <div className="settlement-choice-grid">
-                        {selectedMunicipalityData.neighborhoods.map((neighborhood) => (
-                          <button
-                            className={selectedSettlement === neighborhood ? "location-choice is-active" : "location-choice"}
-                            type="button"
-                            key={neighborhood}
-                            onClick={() => chooseSettlement(neighborhood)}
-                          >
-                            {neighborhood}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="location-option-group">
-                      <div><strong>Службени населени места</strong><span>{selectedMunicipalityData.administrativeSettlements.length}</span></div>
-                      <div className="settlement-choice-grid">
-                        {selectedMunicipalityData.administrativeSettlements
-                          .filter((settlement) => !selectedMunicipalityData.neighborhoods.includes(settlement))
-                          .map((settlement) => (
-                            <button
-                              className={selectedSettlement === settlement ? "location-choice is-active" : "location-choice"}
-                              type="button"
-                              key={settlement}
-                              onClick={() => chooseSettlement(settlement)}
-                            >
-                              {settlement}
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  </section>
-                )}
-              </div>
-
-              <footer className="location-dialog__footer">
-                <span>{selectedLocation}</span>
-                <button className="button button--primary" type="button" onClick={() => setLocationPickerOpen(false)}>
-                  Готово
-                </button>
-              </footer>
-            </section>
+        <section id="kategorii" className="doma-section doma-section--categories">
+          <div className="doma-shell">
+            <div className="section-heading section-heading--split"><div><p className="eyebrow">ПОБРЗ ПОЧЕТОК</p><h2>Изберете го видот што го барате.</h2></div><button className="text-link text-link--desktop" type="button" onClick={() => setAdvancedOpen(true)}>Сите филтри <Icon name="arrow" size={17} /></button></div>
+            <div className="category-grid">{categories.map((category) => <button className="category-card" type="button" key={category.name} onClick={() => selectCategory(category.type)}><span className="category-card__icon"><Icon name={category.icon} size={23} /></span><span className="category-card__text"><strong>{category.name}</strong><small>{category.description}</small></span><span className="category-card__arrow"><Icon name="arrow" size={18} /></span></button>)}</div>
           </div>
-        )} */}
+        </section>
 
-        <div className="doma-notice-wrap" aria-live="polite" aria-atomic="true">
-          {notice && (
-            <div className="doma-notice">
-              <Icon name="check" size={17} />
-              <span>{notice}</span>
-              <button type="button" aria-label="Затвори известување" onClick={() => setNotice("")}>
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-          )}
-        </div>
-
-        <section className="doma-section doma-section--categories" id="kategorii" aria-labelledby="categories-title">
+        <section id="oglasi" className="doma-section doma-section--listings">
           <div className="doma-shell">
             <div className="section-heading section-heading--split">
-              <div>
-                <p className="eyebrow">НАЈДЕТЕ ГО ТОЧНОТО МЕСТО</p>
-                <h2 id="categories-title">Започнете со она што ви е важно.</h2>
-              </div>
-              <button className="text-link" type="button" onClick={scrollToListings}>
-                Истражи огласи <Icon name="arrow" size={18} />
-              </button>
+              <div><p className="eyebrow">ПОНУДА ВО СКОПЈЕ</p><h2>{appliedSearch ? "Резултати според вашиот избор." : "Повеќе различни демо огласи на едно место."}</h2><p className="listing-filter-summary">{appliedSearch ? searchLabel + " · " + selectedCity + " · " + (propertyType === "all" ? "сите типови" : propertyType) + " · " + publisherLabels[publisherType] : "Примерни станови, куќи, соба, гаража и деловен простор од различни делови на Скопје."}</p></div>
+              <button className="button button--outline" type="button" onClick={() => setAdvancedOpen(true)}><Icon name="filter" size={18} /> Промени филтри</button>
             </div>
-
-            <div className="category-grid">
-              {categories.map((category) => (
-                <button
-                  key={category.name}
-                  className="category-card"
-                  type="button"
-                  onClick={() => selectCategory(category.name)}
-                >
-                  <span className="category-card__icon"><Icon name={category.icon} size={25} /></span>
-                  <span className="category-card__text">
-                    <strong>{category.name}</strong>
-                    <small>{category.description}</small>
-                  </span>
-                  <span className="category-card__arrow"><Icon name="arrow" size={18} /></span>
-                </button>
-              ))}
-            </div>
+            {appliedSearch && <div className="result-toolbar"><span><strong>{filteredListings.length}</strong> огласи</span><button type="button" onClick={() => { setAppliedSearch(null); resetAdvancedFilters(); }}>Исчисти пребарување</button></div>}
+            <div className="listing-grid">{filteredListings.length > 0 ? filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} favorite={favorites.includes(listing.id)} onFavorite={() => toggleFavorite(listing.id)} onOpen={() => setDetailListingId(listing.id)} />) : <div className="listing-empty">Нема одобрени демо огласи со оваа комбинација. Пробајте друга општина, тип или исчистете ја нацртаната зона на мапата.</div>}</div>
+            <p className="demo-note">Сите цени, адреси, статуси и бројки во оваа верзија се примерни демо-податоци за проверка на искуството.</p>
           </div>
         </section>
 
-        <section className="doma-section doma-section--listings" id="oglasi" aria-labelledby="listings-title">
+        <section id="partneri" className="doma-section doma-section--partners">
           <div className="doma-shell">
-            <div className="section-heading section-heading--split">
-              <div>
-                <p className="eyebrow">ИЗБРАНИ ИМОТИ</p>
-                <h2 id="listings-title">Домови што вреди да ги погледнете.</h2>
-                <p className="listing-filter-summary">
-                  {publisherType === "all"
-                    ? "Огласи од агенции, фирми / инвеститори и приватни сопственици."
-                    : `Прикажани се огласи од: ${publisherLabels[publisherType]}.`}
-                </p>
-              </div>
-              <button
-                className="text-link text-link--desktop"
-                type="button"
-                onClick={() => setNotice("Страницата со сите огласи е следната функција што ќе ја поврземе со база на податоци.")}
-              >
-                Погледни ги сите <Icon name="arrow" size={18} />
-              </button>
+            <div className="section-heading"><p className="eyebrow">ПАРТНЕРИ · ДЕМО ПОДАТОЦИ</p><h2>Агенции и градежни компании на почетната.</h2><p className="listing-filter-summary">Првите три се нагласени според примерен број отворања на нивните огласи во последни 30 дена.</p></div>
+            <div className="partner-section">
+              <div className="partner-section__heading"><div><span className="partner-section__icon"><Icon name="building" size={18} /></span><h3>Активни агенции</h3></div><button type="button" onClick={() => filterByPartner("agency")}>Види ги огласите <Icon name="arrow" size={16} /></button></div>
+              <div className="partner-rail">{agencyPartners.map((partner, index) => <article className={index < 3 ? "partner-card is-featured" : "partner-card"} key={partner.name}>{index < 3 && <span className="partner-card__top">Најпосетувана</span>}<span className="partner-card__logo">{partner.initial}</span><strong>{partner.name}</strong><small>{partner.listings + " активни демо огласи"}</small><span className="partner-card__views"><Icon name="eye" size={14} />{partner.views.toLocaleString("mk-MK") + " прегледи"}</span></article>)}</div>
             </div>
-
-            <div className="listing-grid">
-              {visibleListings.map((listing, index) => {
-                const isFavorite = favorites.includes(listing.id);
-
-                return (
-                  <article className="listing-card" key={listing.id}>
-                    <div className={`listing-card__media listing-card__media--${index + 1}`}>
-                      <Image
-                        src="/images/doma-hero.png"
-                        alt={`Илустративен приказ за ${listing.title}`}
-                        fill
-                        sizes="(max-width: 720px) 100vw, (max-width: 1050px) 50vw, 33vw"
-                        className="listing-card__photo"
-                        style={{ objectPosition: listing.imagePosition }}
-                      />
-                      <div className="listing-card__shade" />
-                      <span className="listing-card__badge">{listing.label}</span>
-                      <button
-                        className={isFavorite ? "heart-button is-favorite" : "heart-button"}
-                        type="button"
-                        aria-label={isFavorite ? `Отстрани ${listing.title} од омилени` : `Додај ${listing.title} во омилени`}
-                        aria-pressed={isFavorite}
-                        onClick={() => toggleFavorite(listing.id)}
-                      >
-                        <Icon name="heart" size={20} filled={isFavorite} />
-                      </button>
-                    </div>
-                    <div className="listing-card__body">
-                      <p className="listing-card__location"><Icon name="pin" size={16} /> {listing.location}</p>
-                      <p className="listing-card__publisher">
-                        <span>Огласувач</span>
-                        {publisherLabels[listing.publisher]}
-                      </p>
-                      <h3>{listing.title}</h3>
-                      <p className="listing-card__details">{listing.details}</p>
-                      <div className="listing-card__footer">
-                        <p><strong>{listing.price}</strong>{listing.priceNote && <span>{listing.priceNote}</span>}</p>
-                        <button
-                          className="listing-card__view"
-                          type="button"
-                          onClick={() => setNotice(`${listing.title} е демо-оглас. Деталниот приказ ќе биде поврзан во следниот екран.`)}
-                          aria-label={`Отвори ${listing.title}`}
-                        >
-                          <Icon name="arrow" size={19} />
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-
-              {visibleListings.length === 0 && (
-                <div className="listing-empty" role="status">
-                  Нема демо-огласи за избраниот тип објавувач. Изберете „Сите објавувачи“ за целосен преглед.
-                </div>
-              )}
+            <div className="partner-section">
+              <div className="partner-section__heading"><div><span className="partner-section__icon partner-section__icon--warm"><Icon name="home" size={18} /></span><h3>Градежни компании</h3></div><button type="button" onClick={() => filterByPartner("developer")}>Види ги огласите <Icon name="arrow" size={16} /></button></div>
+              <div className="partner-rail">{developerPartners.map((partner, index) => <article className={index < 3 ? "partner-card is-featured partner-card--developer" : "partner-card partner-card--developer"} key={partner.name}>{index < 3 && <span className="partner-card__top">Најпосетувана</span>}<span className="partner-card__logo">{partner.initial}</span><strong>{partner.name}</strong><small>{partner.listings + " активни демо огласи"}</small><span className="partner-card__views"><Icon name="eye" size={14} />{partner.views.toLocaleString("mk-MK") + " прегледи"}</span></article>)}</div>
             </div>
-
-            <p className="demo-note">Прикажаните огласи и цени се демонстративни; следната фаза ги поврзува со вистински податоци.</p>
           </div>
         </section>
 
-        <section className="doma-section doma-section--principles" aria-label="Предности на DOMA">
+        <section className="doma-section doma-section--principles">
           <div className="doma-shell principles-grid">
-            <div className="principles-intro">
-              <p className="eyebrow">ПОЈАСЕН НАЧИН НА БАРАЊЕ</p>
-              <h2>Помалку бучава. Повеќе чувство дека сте на вистинското место.</h2>
-            </div>
+            <div className="principles-intro"><p className="eyebrow">КАКО РАБОТИ</p><h2>Податоците треба да помагаат при одлука, не да пречат.</h2></div>
             <div className="principle-list">
-              <article>
-                <span>01</span>
-                <div><h3>Јасни информации</h3><p>На едно место ќе ги собереме клучните детали што ви помагаат да одлучите побрзо.</p></div>
-              </article>
-              <article>
-                <span>02</span>
-                <div><h3>Локален контекст</h3><p>Барањето почнува од соседството, вашиот ритам и тоа што ви е навистина блиску.</p></div>
-              </article>
-              <article>
-                <span>03</span>
-                <div><h3>Простор за сигурност</h3><p>Веродостојноста на огласите и агенциите е планирана како основна, а не дополнителна функција.</p></div>
-              </article>
+              <article><span>01</span><div><h3>Прво едноставен избор</h3><p>Град, вид на имот и огласувач. Нема буџет во почетниот екран.</p></div></article>
+              <article><span>02</span><div><h3>Потоа прецизни детали</h3><p>Општина, населба, градба, квадратура, кат, лифт, паркинг, греење, ладење и мапа.</p></div></article>
+              <article><span>03</span><div><h3>Јасна проверка</h3><p>Секој нов демо оглас бара цена и точна адреса пред да влезе во админ-проверка.</p></div></article>
             </div>
           </div>
         </section>
 
-        <section className="doma-cta" id="za-agencii" aria-labelledby="cta-title">
-          <div className="doma-shell doma-cta__inner">
-            <div>
-              <p className="eyebrow eyebrow--light">ИМАТЕ ИМОТ?</p>
-              <h2 id="cta-title">Дајте му простор да биде забележан.</h2>
-              <p>Подгответе ги првите огласи и поставете стандарден, сигурен начин на комуникација со заинтересираните купувачи.</p>
-            </div>
-            <div className="doma-cta__actions">
-              <button className="button button--light" type="button" onClick={showPublishMessage}>Објавете оглас <Icon name="arrow" size={18} /></button>
-              <button className="button button--ghost-light" type="button" onClick={() => setNotice("Во следната фаза ќе додадеме контакт-форма за агенции и сопственици.")}>За агенции</button>
-            </div>
-          </div>
+        <section className="doma-cta">
+          <div className="doma-shell doma-cta__inner"><div><p className="eyebrow eyebrow--light">ЗА СОПСТВЕНИЦИ, АГЕНЦИИ И ИНВЕСТИТОРИ</p><h2>Објавете имот со податоци што се навистина корисни.</h2><p>Во демо-формата се задолжителни точна цена, адреса и статус на градба. Профилот и админ-прегледот подготвуваат основа за следната фаза.</p></div><div className="doma-cta__actions"><button className="button button--light" type="button" onClick={() => setPublishOpen(true)}>Објавете оглас <Icon name="arrow" size={18} /></button><button className="button button--ghost-light" type="button" onClick={() => setAccountOpen(true)}>Креирај профил</button></div></div>
         </section>
       </main>
 
-      <footer className="doma-footer">
-        <div className="doma-shell doma-footer__inner">
-          <a className="doma-logo doma-logo--footer" href="#pocetna" aria-label="DOMA, почетна">
-            <span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>
-            DOMA
-          </a>
-          <p>Прва основа за појасно пребарување недвижности во Македонија.</p>
-          <span>© 2026 DOMA</span>
+      <footer className="doma-footer"><div className="doma-shell doma-footer__inner"><a className="doma-logo doma-logo--footer" href="#pocetna" aria-label="DOMA, почетна"><span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>DOMA</a><p>Прототип за појасно пребарување недвижности во Македонија.</p><button className="footer-admin-link" type="button" onClick={() => setAdminOpen(true)}>Отвори админ демо</button><span>© 2026 DOMA</span></div></footer>
+
+      {advancedOpen && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdvancedOpen(false); }}>
+          <section className="workflow-dialog" role="dialog" aria-modal="true" aria-labelledby="advanced-title">
+            <header className="workflow-dialog__header"><div><p>ЧЕКОР 2 ОД 2</p><h2 id="advanced-title">Детали за вашето пребарување</h2><div className="selection-chips" aria-label="Основен избор"><span>{selectedCity}</span><span>{propertyType === "all" ? "Сите типови" : propertyType}</span><span>{publisherLabels[publisherType]}</span><span>{searchLabel}</span></div></div><button className="dialog-close" type="button" aria-label="Затвори напредни филтри" onClick={() => setAdvancedOpen(false)}><Icon name="close" size={19} /></button></header>
+            <div className="workflow-dialog__content">
+              <div className="advanced-layout">
+                <section className="advanced-filters" aria-labelledby="location-filter-title">
+                  <div className="advanced-section-heading"><span><Icon name="filter" size={18} /></span><div><h3 id="location-filter-title">Локација и карактеристики</h3><p>Изберете само што ви е важно.</p></div></div>
+                  <div className="advanced-filter-grid">
+                    <label className="field-block"><span>Општина</span><select value={advanced.municipality} onChange={(event) => chooseMunicipality(event.target.value)} disabled={selectedCity !== "Скопје"}><option value="">Сите општини</option>{skopjeMunicipalities.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
+                    <label className="field-block"><span>Населба</span><select value={advanced.neighborhood} onChange={(event) => updateAdvanced("neighborhood", event.target.value)} disabled={!advanced.municipality || selectedCity !== "Скопје"}><option value="">Сите населби</option>{visibleNeighborhoods.map((neighborhood) => <option key={neighborhood}>{neighborhood}</option>)}</select></label>
+                    <label className="field-block"><span>Состојба на градба</span><select value={advanced.construction} onChange={(event) => updateAdvanced("construction", event.target.value as AdvancedFilters["construction"])}><option value="all">Сеедно</option><option value="built">Изградено</option><option value="in_progress">Во тек на градба</option></select></label>
+                    <label className="field-block"><span>Кат</span><select value={advanced.floor} onChange={(event) => updateAdvanced("floor", event.target.value as AdvancedFilters["floor"])}><option value="all">Сите катови</option><option value="lower">Приземје до 3 кат</option><option value="upper">4 кат и погоре</option></select></label>
+                    <label className="field-block"><span>Минимална квадратура</span><input type="number" min="0" inputMode="numeric" placeholder="на пр. 60" value={advanced.minArea} onChange={(event) => updateAdvanced("minArea", event.target.value)} /></label>
+                    <label className="field-block"><span>Максимална квадратура</span><input type="number" min="0" inputMode="numeric" placeholder="на пр. 120" value={advanced.maxArea} onChange={(event) => updateAdvanced("maxArea", event.target.value)} /></label>
+                    <label className="field-block"><span>Лифт</span><select value={advanced.elevator} onChange={(event) => updateAdvanced("elevator", event.target.value as AdvancedFilters["elevator"])}><option value="all">Сеедно</option><option value="yes">Со лифт</option><option value="no">Без лифт</option></select></label>
+                    <label className="field-block"><span>Паркинг</span><select value={advanced.parking} onChange={(event) => updateAdvanced("parking", event.target.value as AdvancedFilters["parking"])}><option value="all">Сеедно</option><option value="yes">Со паркинг</option></select></label>
+                    <label className="field-block"><span>Греење</span><select value={advanced.heating} onChange={(event) => updateAdvanced("heating", event.target.value)}><option value="all">Сите видови</option><option>Централно</option><option>Подно греење</option><option>Гасно греење</option><option>Електрично</option><option>Печка на пелети</option><option>Топлотна пумпа</option></select></label>
+                    <label className="field-block"><span>Ладење</span><select value={advanced.cooling} onChange={(event) => updateAdvanced("cooling", event.target.value)}><option value="all">Сите видови</option><option>Инвертер клима</option><option>Мулти-сплит систем</option><option>Топлотна пумпа</option></select></label>
+                  </div>
+                  {advanced.municipality && <aside className="market-insight" aria-live="polite"><span className="market-insight__label">{advanced.neighborhood ? "Населба " + advanced.neighborhood : "Општина " + advanced.municipality}</span>{marketAverage && marketAverage.count > 0 ? <strong>Демо просек: {formatEuro(marketAverage.value).replace(" €", "")} €/m²{mode === "rent" ? " месечно" : ""}</strong> : <strong>Нема доволно демо податоци за овој избор.</strong>}<small>{marketAverage?.count ?? 0} одобрени примерни огласи · {searchLabel.toLowerCase()}</small></aside>}
+                </section>
+                <aside className="map-teaser"><span className="map-teaser__icon"><Icon name="map" size={21} /></span><p className="eyebrow">ПРЕБАРУВАЊЕ НА МАПА</p><h3>Нацртајте област или поставете радиус.</h3><p>Изберете дел од градот со слободно повлекување линија или со круг околу точка.</p><ul><li>{mapFilter.tool === "radius" && mapFilter.center ? "Радиус е поставен" : mapFilter.tool === "polygon" && mapFilter.polygon.length >= 3 ? "Област е нацртана" : "Нема избрана зона"}</li><li>{previewListings.length + " демо огласи во тековниот избор"}</li></ul><button className="button button--primary" type="button" onClick={() => setMapOpen(true)}><Icon name="map" size={18} /> Отвори мапа</button><small>Мапата во демото е подготвена за Скопје.</small></aside>
+              </div>
+            </div>
+            <footer className="workflow-dialog__footer"><button className="dialog-reset" type="button" onClick={resetAdvancedFilters}>Ресетирај детали</button><div><span>{previewListings.length + " огласи подготвени за приказ"}</span><button className="button button--primary" type="button" onClick={applyAdvancedFilters}>Прикажи огласи <Icon name="arrow" size={18} /></button></div></footer>
+          </section>
         </div>
-      </footer>
+      )}
+
+      {mapOpen && (
+        <div className="workflow-backdrop map-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMapOpen(false); }}>
+          <section className="map-dialog" role="dialog" aria-modal="true" aria-labelledby="map-title">
+            <header className="map-dialog__header"><div><p>ЗОНА НА ПРЕБАРУВАЊЕ · ДЕМО</p><h2 id="map-title">Изберете дел од {selectedCity}</h2></div><button className="dialog-close" type="button" aria-label="Затвори мапа" onClick={() => setMapOpen(false)}><Icon name="close" size={19} /></button></header>
+            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className={mapFilter.tool === "radius" ? "is-active" : ""} type="button" onClick={() => setMapTool("radius")}>Радиус</button><button className={mapFilter.tool === "polygon" ? "is-active" : ""} type="button" onClick={() => setMapTool("polygon")}>Нацртај зона</button></div>{mapFilter.tool === "radius" && <label className="map-radius-control"><span>Големина на радиус</span><input type="range" min="8" max="36" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{mapFilter.radius + " единици"}</strong></label>}<button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
+            <div className="map-stage">
+              {selectedCity === "Скопје" ? <><svg ref={mapRef} className="skopje-map" viewBox="0 0 100 70" role="img" aria-label="Интерактивна демо мапа на Скопје" onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}><rect width="100" height="70" fill="#e8eee8" /><path d="M-3 42 C15 35 24 42 36 36 S61 39 78 31 S92 31 104 24" fill="none" stroke="#8db6c6" strokeWidth="2.7" /><path d="M8 13 C25 24 37 15 51 25 S72 21 92 15" fill="none" stroke="#c7d3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M14 64 C30 51 42 58 53 49 S79 55 95 45" fill="none" stroke="#cad3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M19 2 L30 68M46 0 L42 69M72 1 L63 69M2 24 L98 36M3 55 L98 47" fill="none" stroke="#f8fbf8" strokeWidth="1.3" opacity=".9" /><text x="18" y="20" className="skopje-map__label">ЃОРЧЕ</text><text x="34" y="28" className="skopje-map__label">КАРПОШ</text><text x="46" y="36" className="skopje-map__label">ЦЕНТАР</text><text x="68" y="42" className="skopje-map__label">АЕРОДРОМ</text><text x="54" y="15" className="skopje-map__label">БУТЕЛ</text>{mapFilter.tool === "radius" && mapFilter.center && <circle cx={mapFilter.center.x} cy={mapFilter.center.y} r={mapFilter.radius} className="skopje-map__radius" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 1 && <polyline points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 2 && <polygon points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon-fill" />}</svg><div className="map-pin-layer" aria-label="Демо огласи на мапата">{mapPins.map((listing) => <button type="button" key={listing.id} className={mapFocusId === listing.id ? "map-pin is-active" : "map-pin"} style={{ left: listing.map.x + "%", top: (listing.map.y / 70) * 100 + "%" }} aria-label={listing.title + ", " + formatEuro(listing.priceEur)} onPointerDown={(event) => event.stopPropagation()} onClick={() => setMapFocusId(listing.id)}>{formatEuro(listing.priceEur).replace(" €", "€")}</button>)}</div>{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Мапата во оваа демо-верзија е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
+            </div>
+            <footer className="map-dialog__footer"><span>{mapFilter.tool === "radius" ? "Кликнете на мапата за центар на радиус." : "Повлечете по мапата за да нацртате област."}</span><button className="button button--primary" type="button" onClick={() => setMapOpen(false)}>Потврди зона <Icon name="check" size={18} /></button></footer>
+          </section>
+        </div>
+      )}
+
+      {publishOpen && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishOpen(false); }}>
+          <section className="compact-dialog" role="dialog" aria-modal="true" aria-labelledby="publish-title">
+            <header className="compact-dialog__header"><div><p>ОБЈАВИ ОГЛАС · ДЕМО</p><h2 id="publish-title">Внесете ги основните точни податоци.</h2></div><button className="dialog-close" type="button" aria-label="Затвори форма за оглас" onClick={() => setPublishOpen(false)}><Icon name="close" size={19} /></button></header>
+            <form className="publish-form" onSubmit={handlePublish}>
+              <label className="field-block field-block--wide"><span>Наслов на оглас</span><input required placeholder="на пр. Трособен стан во Аеродром" value={publishForm.title} onChange={(event) => setPublishForm((current) => ({ ...current, title: event.target.value }))} /></label>
+              <label className="field-block"><span>Тип</span><select value={publishForm.propertyType} onChange={(event) => setPublishForm((current) => ({ ...current, propertyType: event.target.value as PropertyType }))}>{propertyTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
+              <label className="field-block"><span>Намена</span><select value={publishForm.intent} onChange={(event) => setPublishForm((current) => ({ ...current, intent: event.target.value as ListingIntent }))}><option value="sale">Продажба</option><option value="rent">Изнајмување</option></select></label>
+              <label className="field-block"><span>Кој објавува</span><select value={publishForm.publisherType} onChange={(event) => setPublishForm((current) => ({ ...current, publisherType: event.target.value as PublisherType }))}><option value="owner">Приватен сопственик</option><option value="agency">Агенција</option><option value="developer">Инвеститор / фирма</option></select></label>
+              <label className="field-block"><span>Точна цена во €</span><input required min="1" type="number" inputMode="decimal" placeholder="на пр. 142000" value={publishForm.price} onChange={(event) => setPublishForm((current) => ({ ...current, price: event.target.value }))} /></label>
+              <label className="field-block field-block--wide"><span>Точна адреса</span><input required placeholder="улица, број, општина, град" value={publishForm.address} onChange={(event) => setPublishForm((current) => ({ ...current, address: event.target.value }))} /></label>
+              <label className="field-block"><span>Општина</span><select value={publishForm.municipality} onChange={(event) => setPublishForm((current) => ({ ...current, municipality: event.target.value, neighborhood: "" }))}>{skopjeMunicipalities.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
+              <label className="field-block"><span>Населба</span><select value={publishForm.neighborhood} onChange={(event) => setPublishForm((current) => ({ ...current, neighborhood: event.target.value }))}>{(skopjeMunicipalities.find((item) => item.name === publishForm.municipality)?.neighborhoods ?? []).map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label className="field-block"><span>Состојба</span><select value={publishForm.construction} onChange={(event) => setPublishForm((current) => ({ ...current, construction: event.target.value as ConstructionState }))}><option value="built">Изградено</option><option value="in_progress">ВО ТЕК НА ГРАДБА</option></select></label>
+              {publishForm.construction === "built" && <label className="field-block"><span>Година на градба</span><input required min="1800" max="2030" type="number" placeholder="на пр. 2018" value={publishForm.year} onChange={(event) => setPublishForm((current) => ({ ...current, year: event.target.value }))} /></label>}
+              <p className="form-helper">Во продукција оваа форма ќе има верификација на адреса, сопственик и документи. Сега создава локален оглас што чека админ-проверка.</p>
+              <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => setPublishOpen(false)}>Откажи</button><button className="button button--primary" type="submit">Испрати на проверка <Icon name="arrow" size={18} /></button></div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {accountOpen && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccountOpen(false); }}>
+          <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title">
+            <header className="compact-dialog__header"><div><p>МОЈА DOMA · ДЕМО ПРОФИЛ</p><h2 id="account-title">{accountCreated ? "Вашиот работен преглед" : "Креирајте профил за да продолжите."}</h2></div><button className="dialog-close" type="button" aria-label="Затвори профил" onClick={() => setAccountOpen(false)}><Icon name="close" size={19} /></button></header>
+            {!accountCreated ? <form className="account-create" onSubmit={(event) => { event.preventDefault(); setAccountCreated(true); }}><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Профилот во оваа верзија е локален демо-профил. По креирање ќе видите статистика, свои огласи и понуди.</p><label className="field-block"><span>Име</span><input required placeholder="Вашето име" /></label><label className="field-block"><span>Е-пошта</span><input required type="email" placeholder="ime@email.com" /></label><button className="button button--primary" type="submit">Креирај демо профил <Icon name="arrow" size={18} /></button></form> : <div className="account-workspace"><nav className="workspace-tabs" aria-label="Делови од профилот"><button className={accountTab === "overview" ? "is-active" : ""} type="button" onClick={() => setAccountTab("overview")}>Преглед</button><button className={accountTab === "listings" ? "is-active" : ""} type="button" onClick={() => setAccountTab("listings")}>Мои огласи</button><button className={accountTab === "offers" ? "is-active" : ""} type="button" onClick={() => setAccountTab("offers")}>Понуди</button><button className={accountTab === "saved" ? "is-active" : ""} type="button" onClick={() => setAccountTab("saved")}>Омилени</button></nav>
+              {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Прегледи</span><strong>1.284</strong><small>последни 30 дена · демо</small></article><article><span>Нови понуди</span><strong>6</strong><small>2 чекаат одговор</small></article><article><span>Зачувани</span><strong>{favorites.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Интерес за вашиот оглас</span><strong>Прегледи → пораки → понуди</strong></div><div className="bar-chart" aria-label="Демо графикон на интерес"><i /><i /><i /><i /><i /><i /><i /></div></div></div>}
+              {accountTab === "listings" && <div className="workspace-list"><strong>Огласи од овој уред</strong>{listingInventory.filter((listing) => listing.publisherName === "Мој демо профил").length ? listingInventory.filter((listing) => listing.publisherName === "Мој демо профил").map((listing) => <p key={listing.id}>{listing.title}<span>{statusLabel(listing.status)}</span></p>) : <p>Сè уште немате објавен локален демо оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
+              {accountTab === "offers" && <div className="workspace-list"><strong>Нови понуди и пораки</strong><p><span>Ана П.</span> Барам термин за разгледување во сабота <small>денес</small></p><p><span>Марко Д.</span> Дали е слободно гаражното место? <small>вчера</small></p><p><span>Ирина С.</span> Испратена е примерна понуда за цена <small>пред 2 дена</small></p></div>}
+              {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong><p>{favorites.length ? favorites.length + " огласи се зачувани локално во оваа демо-сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p></div>}
+            </div>}
+          </section>
+        </div>
+      )}
+
+      {adminOpen && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdminOpen(false); }}>
+          <section className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+            <header className="compact-dialog__header"><div><p>АДМИН · ЛОКАЛЕН ДЕМО ПРЕГЛЕД</p><h2 id="admin-title">Модерација на огласи</h2><span className="admin-disclaimer">Овие контроли важат само во тековната сесија. Вистинскиот админ бара заштитена најава и база.</span></div><button className="dialog-close" type="button" aria-label="Затвори админ" onClick={() => setAdminOpen(false)}><Icon name="close" size={19} /></button></header>
+            <div className="admin-filter-bar" role="group" aria-label="Статус на огласи">{(["pending", "approved", "rejected", "all"] as const).map((status) => <button key={status} className={adminFilter === status ? "is-active" : ""} type="button" onClick={() => setAdminFilter(status)}>{status === "all" ? "Сите" : statusLabel(status)}</button>)}<button className="admin-settings-button" type="button" onClick={() => setNotice("Поставките за содржина на страница ќе ги заклучиме во последната фаза.")}>Поставки за страница</button></div>
+            <div className="admin-list">{adminListings.map((listing) => <article className="admin-row" key={listing.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + listing.status}>{statusLabel(listing.status)}</span><strong>{listing.title}</strong><small>{formatEuro(listing.priceEur) + " · " + listing.address}</small></div><div className="admin-row__actions">{listing.status !== "approved" && <button type="button" onClick={() => updateListingStatus(listing.id, "approved")}>Одобри</button>}{listing.status !== "pending" && <button type="button" onClick={() => updateListingStatus(listing.id, "pending")}>Побарај измени</button>}{listing.status !== "rejected" && <button type="button" className="admin-row__reject" onClick={() => updateListingStatus(listing.id, "rejected")}>Одбиј</button>}<button type="button" className="admin-row__delete" aria-label="Избриши оглас" onClick={() => deleteListing(listing.id)}><Icon name="trash" size={16} /></button></div></article>)}{!adminListings.length && <p className="admin-empty">Нема огласи со овој статус.</p>}</div>
+          </section>
+        </div>
+      )}
+
+      {selectedDetail && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailListingId(null); }}>
+          <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+            <div className="detail-dialog__image"><Image src="/images/doma-hero.png" alt="" fill sizes="(max-width: 720px) 100vw, 700px" style={{ objectFit: "cover", objectPosition: selectedDetail.photoPosition }} /><div /><button className="dialog-close detail-dialog__close" type="button" aria-label="Затвори детали" onClick={() => setDetailListingId(null)}><Icon name="close" size={19} /></button><span>{selectedDetail.badge ?? "ДЕМО ОГЛАС"}</span></div>
+            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2><p className="detail-address"><Icon name="pin" size={17} />Демо точна адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><button className="button button--primary" type="button" onClick={() => { toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favorites.includes(selectedDetail.id)} /></button></div></div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
