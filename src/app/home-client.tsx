@@ -20,6 +20,7 @@ type IconName =
 type Listing = {
   id: string;
   label: string;
+  publisher: PublisherType;
   title: string;
   location: string;
   details: string;
@@ -27,6 +28,23 @@ type Listing = {
   priceNote?: string;
   imagePosition: string;
 };
+
+type PublisherType = "agency" | "developer" | "owner";
+type PublisherFilter = PublisherType | "all";
+
+const publisherLabels: Record<PublisherFilter, string> = {
+  all: "Сите огласувачи",
+  agency: "Агенција за недвижности",
+  developer: "Инвеститор / градежна фирма",
+  owner: "Приватен сопственик",
+};
+
+const publisherOptions: Array<{ value: PublisherFilter; label: string }> = [
+  { value: "all", label: publisherLabels.all },
+  { value: "agency", label: publisherLabels.agency },
+  { value: "developer", label: publisherLabels.developer },
+  { value: "owner", label: publisherLabels.owner },
+];
 
 const cities = ["Скопје", "Охрид", "Битола", "Тетово"];
 const propertyTypes = ["Стан", "Куќа", "Деловен простор", "Парцела"];
@@ -53,6 +71,7 @@ const listings: Listing[] = [
   {
     id: "aerodrom",
     label: "Проверен оглас",
+    publisher: "agency",
     title: "Панорамски стан во Аеродром",
     location: "Аеродром, Скопје",
     details: "92 m²  ·  3 спални  ·  6/8 кат",
@@ -62,6 +81,7 @@ const listings: Listing[] = [
   {
     id: "karposh",
     label: "Ново",
+    publisher: "developer",
     title: "Мирен дом покрај Градски парк",
     location: "Карпош, Скопје",
     details: "74 m²  ·  2 спални  ·  3/5 кат",
@@ -71,6 +91,7 @@ const listings: Listing[] = [
   {
     id: "vodno",
     label: "Издвоено",
+    publisher: "owner",
     title: "Современ стан со многу светлина",
     location: "Водно, Скопје",
     details: "108 m²  ·  3 спални  ·  2/4 кат",
@@ -209,11 +230,15 @@ export default function HomeClient() {
   const [activeCity, setActiveCity] = useState<string | null>(null);
   const [propertyType, setPropertyType] = useState("Стан");
   const [budget, setBudget] = useState("До 150.000 €");
+  const [publisherType, setPublisherType] = useState<PublisherFilter>("all");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
   const searchLabel = mode === "buy" ? "Купување" : "Изнајмување";
+  const visibleListings = listings.filter(
+    (listing) => publisherType === "all" || listing.publisher === publisherType,
+  );
 
   function scrollToListings() {
     document.getElementById("oglasi")?.scrollIntoView({
@@ -227,7 +252,7 @@ export default function HomeClient() {
     const selectedLocation = location.trim() || activeCity || "Скопје";
 
     setNotice(
-      `Демо пребарување: ${searchLabel.toLowerCase()} на ${propertyType.toLowerCase()} во ${selectedLocation}, со буџет ${budget}.`,
+      `Демо пребарување: ${searchLabel.toLowerCase()} на ${propertyType.toLowerCase()} во ${selectedLocation}, со буџет ${budget}${publisherType === "all" ? "" : `. Огласувач: ${publisherLabels[publisherType]}`}.`,
     );
     scrollToListings();
   }
@@ -394,6 +419,22 @@ export default function HomeClient() {
                   </span>
                 </label>
 
+                <label className="search-field search-field--publisher">
+                  <span>Објавувач</span>
+                  <span className="search-field__control">
+                    <select
+                      value={publisherType}
+                      onChange={(event) => setPublisherType(event.target.value as PublisherFilter)}
+                      aria-label="Кој го објавува огласот"
+                    >
+                      {publisherOptions.map((publisher) => (
+                        <option key={publisher.value} value={publisher.value}>{publisher.label}</option>
+                      ))}
+                    </select>
+                    <Icon name="chevron" size={16} />
+                  </span>
+                </label>
+
                 <button className="button button--search" type="submit">
                   <Icon name="search" size={19} />
                   Пребарај
@@ -470,6 +511,11 @@ export default function HomeClient() {
               <div>
                 <p className="eyebrow">ИЗБРАНИ ИМОТИ</p>
                 <h2 id="listings-title">Домови што вреди да ги погледнете.</h2>
+                <p className="listing-filter-summary">
+                  {publisherType === "all"
+                    ? "Огласи од агенции, фирми / инвеститори и приватни сопственици."
+                    : `Прикажани се огласи од: ${publisherLabels[publisherType]}.`}
+                </p>
               </div>
               <button
                 className="text-link text-link--desktop"
@@ -481,7 +527,7 @@ export default function HomeClient() {
             </div>
 
             <div className="listing-grid">
-              {listings.map((listing, index) => {
+              {visibleListings.map((listing, index) => {
                 const isFavorite = favorites.includes(listing.id);
 
                 return (
@@ -509,6 +555,10 @@ export default function HomeClient() {
                     </div>
                     <div className="listing-card__body">
                       <p className="listing-card__location"><Icon name="pin" size={16} /> {listing.location}</p>
+                      <p className="listing-card__publisher">
+                        <span>Огласувач</span>
+                        {publisherLabels[listing.publisher]}
+                      </p>
                       <h3>{listing.title}</h3>
                       <p className="listing-card__details">{listing.details}</p>
                       <div className="listing-card__footer">
@@ -526,6 +576,12 @@ export default function HomeClient() {
                   </article>
                 );
               })}
+
+              {visibleListings.length === 0 && (
+                <div className="listing-empty" role="status">
+                  Нема демо-огласи за избраниот тип објавувач. Изберете „Сите објавувачи“ за целосен преглед.
+                </div>
+              )}
             </div>
 
             <p className="demo-note">Прикажаните огласи и цени се демонстративни; следната фаза ги поврзува со вистински податоци.</p>
