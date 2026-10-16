@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { type FormEvent, useState } from "react";
+import { macedonianCities, skopjeMunicipalities } from "./location-data";
 
 type IconName =
   | "arrow"
@@ -23,6 +24,9 @@ type Listing = {
   publisher: PublisherType;
   title: string;
   location: string;
+  city: string;
+  municipality: string;
+  settlement: string;
   details: string;
   price: string;
   priceNote?: string;
@@ -46,7 +50,6 @@ const publisherOptions: Array<{ value: PublisherFilter; label: string }> = [
   { value: "owner", label: publisherLabels.owner },
 ];
 
-const cities = ["Скопје", "Охрид", "Битола", "Тетово"];
 const propertyTypes = ["Стан", "Куќа", "Деловен простор", "Парцела"];
 
 const categoryToType: Record<string, string> = {
@@ -74,6 +77,9 @@ const listings: Listing[] = [
     publisher: "agency",
     title: "Панорамски стан во Аеродром",
     location: "Аеродром, Скопје",
+    city: "Скопје",
+    municipality: "Аеродром",
+    settlement: "Аеродром",
     details: "92 m²  ·  3 спални  ·  6/8 кат",
     price: "142.000 €",
     imagePosition: "53% center",
@@ -84,6 +90,9 @@ const listings: Listing[] = [
     publisher: "developer",
     title: "Мирен дом покрај Градски парк",
     location: "Карпош, Скопје",
+    city: "Скопје",
+    municipality: "Карпош",
+    settlement: "Карпош 3",
     details: "74 m²  ·  2 спални  ·  3/5 кат",
     price: "126.500 €",
     imagePosition: "70% center",
@@ -94,6 +103,9 @@ const listings: Listing[] = [
     publisher: "owner",
     title: "Современ стан со многу светлина",
     location: "Водно, Скопје",
+    city: "Скопје",
+    municipality: "Центар",
+    settlement: "Водно",
     details: "108 m²  ·  3 спални  ·  2/4 кат",
     price: "980 €",
     priceNote: "/ месечно",
@@ -226,8 +238,9 @@ function Icon({
 
 export default function HomeClient() {
   const [mode, setMode] = useState<"buy" | "rent">("buy");
-  const [location, setLocation] = useState("");
-  const [activeCity, setActiveCity] = useState<string | null>(null);
+  const [selectedCity, setSelectedCity] = useState("Скопје");
+  const [selectedMunicipality, setSelectedMunicipality] = useState("");
+  const [selectedSettlement, setSelectedSettlement] = useState("");
   const [propertyType, setPropertyType] = useState("Стан");
   const [budget, setBudget] = useState("До 150.000 €");
   const [publisherType, setPublisherType] = useState<PublisherFilter>("all");
@@ -236,8 +249,19 @@ export default function HomeClient() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const searchLabel = mode === "buy" ? "Купување" : "Изнајмување";
+  const availableMunicipalities = selectedCity === "Скопје" ? skopjeMunicipalities : [];
+  const selectedMunicipalityData = availableMunicipalities.find(
+    (municipality) => municipality.name === selectedMunicipality,
+  );
+  const selectedLocation = Array.from(
+    new Set([selectedSettlement, selectedMunicipality, selectedCity].filter(Boolean)),
+  ).join(", ");
   const visibleListings = listings.filter(
-    (listing) => publisherType === "all" || listing.publisher === publisherType,
+    (listing) =>
+      (publisherType === "all" || listing.publisher === publisherType) &&
+      listing.city === selectedCity &&
+      (!selectedMunicipality || listing.municipality === selectedMunicipality) &&
+      (!selectedSettlement || listing.settlement === selectedSettlement),
   );
 
   function scrollToListings() {
@@ -249,7 +273,6 @@ export default function HomeClient() {
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const selectedLocation = location.trim() || activeCity || "Скопје";
 
     setNotice(
       `Демо пребарување: ${searchLabel.toLowerCase()} на ${propertyType.toLowerCase()} во ${selectedLocation}, со буџет ${budget}${publisherType === "all" ? "" : `. Огласувач: ${publisherLabels[publisherType]}`}.`,
@@ -257,9 +280,15 @@ export default function HomeClient() {
     scrollToListings();
   }
 
-  function selectCity(city: string) {
-    setActiveCity(city);
-    setLocation(city);
+  function handleCityChange(city: string) {
+    setSelectedCity(city);
+    setSelectedMunicipality("");
+    setSelectedSettlement("");
+  }
+
+  function handleMunicipalityChange(municipality: string) {
+    setSelectedMunicipality(municipality);
+    setSelectedSettlement("");
   }
 
   function selectCategory(category: string) {
@@ -383,18 +412,105 @@ export default function HomeClient() {
               </div>
 
               <div className="search-panel__fields">
-                <label className="search-field search-field--location">
-                  <span>Локација</span>
-                  <span className="search-field__control">
-                    <Icon name="pin" size={19} />
-                    <input
-                      value={location}
-                      onChange={(event) => { setLocation(event.target.value); setActiveCity(null); }}
-                      placeholder="Каде барате?"
-                      aria-label="Локација"
-                    />
-                  </span>
-                </label>
+                <fieldset className="location-picker">
+                  <legend>Локација</legend>
+
+                  <div className="location-picker__controls">
+                    <label className="location-control">
+                      <span>Град</span>
+                      <span className="search-field__control">
+                        <Icon name="pin" size={18} />
+                        <select value={selectedCity} onChange={(event) => handleCityChange(event.target.value)}>
+                          <optgroup label="Издвоен град">
+                            <option value="Скопје">Скопје — главен град</option>
+                          </optgroup>
+                          <optgroup label="Сите градови во Македонија">
+                            {macedonianCities.filter((city) => city !== "Скопје").map((city) => (
+                              <option key={city} value={city}>{city}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                        <Icon name="chevron" size={16} />
+                      </span>
+                    </label>
+
+                    <label className="location-control">
+                      <span>Општина</span>
+                      <span className="search-field__control">
+                        <select
+                          value={selectedMunicipality}
+                          onChange={(event) => handleMunicipalityChange(event.target.value)}
+                          disabled={selectedCity !== "Скопје"}
+                        >
+                          <option value="">
+                            {selectedCity === "Скопје" ? "Изберете општина" : "Достапно за Скопје"}
+                          </option>
+                          {availableMunicipalities.map((municipality) => (
+                            <option key={municipality.name} value={municipality.name}>{municipality.name}</option>
+                          ))}
+                        </select>
+                        <Icon name="chevron" size={16} />
+                      </span>
+                    </label>
+
+                    <label className="location-control">
+                      <span>Населба / населено место</span>
+                      <span className="search-field__control">
+                        <select
+                          value={selectedSettlement}
+                          onChange={(event) => setSelectedSettlement(event.target.value)}
+                          disabled={!selectedMunicipalityData}
+                        >
+                          <option value="">Изберете населба</option>
+                          {selectedMunicipalityData && (
+                            <>
+                              <optgroup label="Градски населби">
+                                {selectedMunicipalityData.neighborhoods.map((neighborhood) => (
+                                  <option key={neighborhood} value={neighborhood}>{neighborhood}</option>
+                                ))}
+                              </optgroup>
+                              <optgroup label="Службени населени места">
+                                {selectedMunicipalityData.administrativeSettlements
+                                  .filter((settlement) => !selectedMunicipalityData.neighborhoods.includes(settlement))
+                                  .map((settlement) => (
+                                    <option key={settlement} value={settlement}>{settlement}</option>
+                                  ))}
+                              </optgroup>
+                            </>
+                          )}
+                        </select>
+                        <Icon name="chevron" size={16} />
+                      </span>
+                    </label>
+                  </div>
+
+                  {selectedCity === "Скопје" && (
+                    <div className="municipality-list" aria-label="Општини во Град Скопје">
+                      <span>Општини во Град Скопје</span>
+                      <div>
+                        {availableMunicipalities.map((municipality) => (
+                          <button
+                            className={selectedMunicipality === municipality.name ? "municipality-pill is-active" : "municipality-pill"}
+                            type="button"
+                            key={municipality.name}
+                            aria-pressed={selectedMunicipality === municipality.name}
+                            onClick={() => handleMunicipalityChange(municipality.name)}
+                          >
+                            {municipality.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="location-picker__helper" id="location-picker-help">
+                    {selectedCity !== "Скопје"
+                      ? "Пребарувањето е поставено за избраниот град. Деталниот избор по општина и населба е достапен за Скопје."
+                      : selectedMunicipalityData
+                        ? `Изберете точна локација од ${selectedMunicipalityData.neighborhoods.length} градски населби и ${selectedMunicipalityData.administrativeSettlements.length} службени населени места во Општина ${selectedMunicipalityData.name}.`
+                        : "Скопје е издвоен прв. Изберете една од 10-те општини за да се појават соодветните населби."}
+                  </p>
+                </fieldset>
 
                 <label className="search-field">
                   <span>Тип на имот</span>
@@ -441,22 +557,6 @@ export default function HomeClient() {
                 </button>
               </div>
             </form>
-
-            <div className="doma-hero__quick">
-              <span>Популарни места</span>
-              <div>
-                {cities.map((city) => (
-                  <button
-                    className={activeCity === city ? "quick-city is-active" : "quick-city"}
-                    type="button"
-                    key={city}
-                    onClick={() => selectCity(city)}
-                  >
-                    {city}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
           <div className="doma-hero__bottom-note">ДЕМО ПЛАТФОРМА · СОЗДАДЕНА ЗА ЛОКАЛЕН ПАЗАР</div>
         </section>
