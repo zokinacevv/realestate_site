@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import { macedonianCities, skopjeMunicipalities } from "./location-data";
+import { type FormEvent, useState } from "react";
+import { macedonianCities } from "./location-data";
 
 type IconName =
   | "arrow"
@@ -24,9 +24,6 @@ type Listing = {
   publisher: PublisherType;
   title: string;
   location: string;
-  city: string;
-  municipality: string;
-  settlement: string;
   details: string;
   price: string;
   priceNote?: string;
@@ -35,12 +32,6 @@ type Listing = {
 
 type PublisherType = "agency" | "developer" | "owner";
 type PublisherFilter = PublisherType | "all";
-type LocationStep = "city" | "municipality" | "settlement";
-type LocationFilter = {
-  city: string;
-  municipality: string;
-  settlement: string;
-};
 
 const publisherLabels: Record<PublisherFilter, string> = {
   all: "Сите огласувачи",
@@ -83,9 +74,6 @@ const listings: Listing[] = [
     publisher: "agency",
     title: "Панорамски стан во Аеродром",
     location: "Аеродром, Скопје",
-    city: "Скопје",
-    municipality: "Аеродром",
-    settlement: "Аеродром",
     details: "92 m²  ·  3 спални  ·  6/8 кат",
     price: "142.000 €",
     imagePosition: "53% center",
@@ -96,9 +84,6 @@ const listings: Listing[] = [
     publisher: "developer",
     title: "Мирен дом покрај Градски парк",
     location: "Карпош, Скопје",
-    city: "Скопје",
-    municipality: "Карпош",
-    settlement: "Карпош 3",
     details: "74 m²  ·  2 спални  ·  3/5 кат",
     price: "126.500 €",
     imagePosition: "70% center",
@@ -109,25 +94,12 @@ const listings: Listing[] = [
     publisher: "owner",
     title: "Современ стан со многу светлина",
     location: "Водно, Скопје",
-    city: "Скопје",
-    municipality: "Центар",
-    settlement: "Водно",
     details: "108 m²  ·  3 спални  ·  2/4 кат",
     price: "980 €",
     priceNote: "/ месечно",
     imagePosition: "83% center",
   },
 ];
-
-function formatLocation({ city, municipality, settlement }: LocationFilter) {
-  if (settlement) {
-    return settlement === municipality
-      ? `${municipality}, ${city}`
-      : `${settlement}, ${municipality}, ${city}`;
-  }
-
-  return municipality ? `${municipality}, ${city}` : city;
-}
 
 function Icon({
   name,
@@ -255,66 +227,17 @@ function Icon({
 export default function HomeClient() {
   const [mode, setMode] = useState<"buy" | "rent">("buy");
   const [selectedCity, setSelectedCity] = useState("Скопје");
-  const [selectedMunicipality, setSelectedMunicipality] = useState("");
-  const [selectedSettlement, setSelectedSettlement] = useState("");
-  const [appliedLocation, setAppliedLocation] = useState<LocationFilter>({
-    city: "Скопје",
-    municipality: "",
-    settlement: "",
-  });
-  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
-  const [locationStep, setLocationStep] = useState<LocationStep>("municipality");
   const [propertyType, setPropertyType] = useState("Стан");
   const [budget, setBudget] = useState("До 150.000 €");
   const [publisherType, setPublisherType] = useState<PublisherFilter>("all");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const locationCloseButtonRef = useRef<HTMLButtonElement>(null);
 
   const searchLabel = mode === "buy" ? "Купување" : "Изнајмување";
-  const availableMunicipalities = selectedCity === "Скопје" ? skopjeMunicipalities : [];
-  const selectedMunicipalityData = availableMunicipalities.find(
-    (municipality) => municipality.name === selectedMunicipality,
-  );
-  const selectedLocation = formatLocation({
-    city: selectedCity,
-    municipality: selectedMunicipality,
-    settlement: selectedSettlement,
-  });
-  const appliedLocationLabel = formatLocation(appliedLocation);
-  const locationTriggerLabel = selectedSettlement
-    ? selectedSettlement === selectedMunicipality
-      ? `${selectedCity} · ${selectedMunicipality}`
-      : `${selectedCity} · ${selectedMunicipality} · ${selectedSettlement}`
-    : selectedMunicipality
-      ? `${selectedCity} · ${selectedMunicipality}`
-      : selectedCity === "Скопје"
-        ? "Скопје · Изберете општина"
-        : selectedCity;
   const visibleListings = listings.filter(
-    (listing) =>
-      (publisherType === "all" || listing.publisher === publisherType) &&
-      listing.city === appliedLocation.city &&
-      (!appliedLocation.municipality || listing.municipality === appliedLocation.municipality) &&
-      (!appliedLocation.settlement || listing.settlement === appliedLocation.settlement),
+    (listing) => publisherType === "all" || listing.publisher === publisherType,
   );
-
-  useEffect(() => {
-    if (!locationPickerOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLocationPickerOpen(false);
-    };
-
-    const frame = window.requestAnimationFrame(() => locationCloseButtonRef.current?.focus());
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [locationPickerOpen]);
 
   function scrollToListings() {
     document.getElementById("oglasi")?.scrollIntoView({
@@ -325,64 +248,11 @@ export default function HomeClient() {
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setAppliedLocation({
-      city: selectedCity,
-      municipality: selectedMunicipality,
-      settlement: selectedSettlement,
-    });
 
     setNotice(
-      `Демо пребарување: ${searchLabel.toLowerCase()} на ${propertyType.toLowerCase()} во ${selectedLocation}, со буџет ${budget}${publisherType === "all" ? "" : `. Огласувач: ${publisherLabels[publisherType]}`}.`,
+      `Демо пребарување: ${searchLabel.toLowerCase()} на ${propertyType.toLowerCase()} во ${selectedCity}, со буџет ${budget}${publisherType === "all" ? "" : `. Огласувач: ${publisherLabels[publisherType]}`}.`,
     );
     scrollToListings();
-  }
-
-  function handleCityChange(city: string) {
-    setSelectedCity(city);
-    setSelectedMunicipality("");
-    setSelectedSettlement("");
-  }
-
-  function handleMunicipalityChange(municipality: string) {
-    setSelectedMunicipality(municipality);
-    setSelectedSettlement("");
-  }
-
-  function openLocationPicker() {
-    setLocationStep(
-      selectedCity === "Скопје"
-        ? selectedMunicipality
-          ? "settlement"
-          : "municipality"
-        : "city",
-    );
-    setLocationPickerOpen(true);
-  }
-
-  function chooseCity(city: string) {
-    handleCityChange(city);
-
-    if (city === "Скопје") {
-      setLocationStep("municipality");
-      return;
-    }
-
-    setLocationPickerOpen(false);
-  }
-
-  function chooseMunicipality(municipality: string) {
-    handleMunicipalityChange(municipality);
-    setLocationStep("settlement");
-  }
-
-  function chooseSettlement(settlement: string) {
-    setSelectedSettlement(settlement);
-    setLocationPickerOpen(false);
-  }
-
-  function resetLocation() {
-    handleCityChange("Скопје");
-    setLocationStep("municipality");
   }
 
   function selectCategory(category: string) {
@@ -506,20 +376,16 @@ export default function HomeClient() {
               </div>
 
               <div className="search-panel__fields">
-                <button
-                  className="location-trigger"
-                  type="button"
-                  aria-haspopup="dialog"
-                  aria-expanded={locationPickerOpen}
-                  onClick={openLocationPicker}
-                >
-                  <span>Локација</span>
-                  <span className="location-trigger__value">
+                <label className="search-field search-field--location">
+                  <span>Град</span>
+                  <span className="search-field__control">
                     <Icon name="pin" size={18} />
-                    <strong>{locationTriggerLabel}</strong>
+                    <select value={selectedCity} onChange={(event) => setSelectedCity(event.target.value)} aria-label="Град">
+                      {macedonianCities.map((city) => <option key={city}>{city}</option>)}
+                    </select>
                     <Icon name="chevron" size={16} />
                   </span>
-                </button>
+                </label>
 
                 <label className="search-field">
                   <span>Тип на имот</span>
@@ -570,7 +436,8 @@ export default function HomeClient() {
           <div className="doma-hero__bottom-note">ДЕМО ПЛАТФОРМА · СОЗДАДЕНА ЗА ЛОКАЛЕН ПАЗАР</div>
         </section>
 
-        {locationPickerOpen && (
+        {/* The detailed location flow was intentionally removed in favor of city-only search.
+        {false && (
           <div
             className="location-dialog-backdrop"
             role="presentation"
@@ -748,7 +615,7 @@ export default function HomeClient() {
               </footer>
             </section>
           </div>
-        )}
+        )} */}
 
         <div className="doma-notice-wrap" aria-live="polite" aria-atomic="true">
           {notice && (
@@ -801,7 +668,7 @@ export default function HomeClient() {
                 <p className="eyebrow">ИЗБРАНИ ИМОТИ</p>
                 <h2 id="listings-title">Домови што вреди да ги погледнете.</h2>
                 <p className="listing-filter-summary">
-                  Локација: {appliedLocationLabel}. {publisherType === "all"
+                  {publisherType === "all"
                     ? "Огласи од агенции, фирми / инвеститори и приватни сопственици."
                     : `Прикажани се огласи од: ${publisherLabels[publisherType]}.`}
                 </p>
@@ -868,7 +735,7 @@ export default function HomeClient() {
 
               {visibleListings.length === 0 && (
                 <div className="listing-empty" role="status">
-                  Нема демо-огласи за {appliedLocationLabel} со избраните филтри. Променете ја локацијата или филтрите и пребарајте повторно.
+                  Нема демо-огласи за избраниот тип објавувач. Изберете „Сите објавувачи“ за целосен преглед.
                 </div>
               )}
             </div>
