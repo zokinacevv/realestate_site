@@ -2000,6 +2000,20 @@ select:focus-visible {
 .workspace-list small { color: #8b9691; font-size: 10px; white-space: nowrap; }
 .workspace-list button { border: 0; background: transparent; color: var(--forest); font-size: inherit; font-weight: 800; text-decoration: underline; }
 
+.offer-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-top: 1px solid #e8eae7; padding: 13px 0; }
+.offer-row > div:first-child { min-width: 0; }
+.offer-row span { color: var(--ink); font-size: 12px; font-weight: 800; }
+.offer-row p { margin: 4px 0 5px; color: #5f706a; font-size: 12px; line-height: 1.45; }
+.offer-row small { color: #8b9691; font-size: 10px; }
+.offer-row__side { display: grid; justify-items: end; gap: 7px; flex: 0 0 auto; }
+.offer-status { border-radius: 999px; padding: 4px 7px; background: #eef2ee; color: #597168; font-size: 9px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.offer-status--accepted { background: #e3f2e8; color: #246647; }
+.offer-status--declined, .offer-status--withdrawn { background: #f5ebea; color: #87544f; }
+.offer-row__actions { display: flex; gap: 8px; }
+.offer-row__actions button, .offer-row__side > button { color: var(--forest); font-size: 11px; }
+.offer-row__actions .offer-row__decline { color: #9c5852; }
+.offer-row button:disabled { cursor: wait; opacity: 0.55; }
+
 .admin-disclaimer {
   display: block;
   max-width: 620px;

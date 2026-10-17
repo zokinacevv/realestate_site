@@ -188,7 +188,7 @@ type AccountOffer = {
   amountCents: number | null;
   currency: string;
   message: string;
-  status: string;
+  status: "sent" | "accepted" | "declined" | "withdrawn";
   createdAt: string;
 };
 
@@ -478,6 +478,7 @@ export default function HomeClient() {
   const [ownedListings, setOwnedListings] = useState<OwnerApiListing[]>([]);
   const [favoriteListings, setFavoriteListings] = useState<ApiListing[]>([]);
   const [accountOffers, setAccountOffers] = useState<AccountOffer[]>([]);
+  const [offerMutatingId, setOfferMutatingId] = useState<string | null>(null);
   const [accountTab, setAccountTab] = useState<"overview" | "listings" | "offers" | "saved">("overview");
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishForm, setPublishForm] = useState<PublishForm>(createEmptyPublishForm);
@@ -910,6 +911,42 @@ export default function HomeClient() {
       setOfferSubmitting(false);
     }
   }
+
+  async function updateOfferStatus(
+    offerId: string,
+    status: "accepted" | "declined" | "withdrawn",
+  ) {
+    setOfferMutatingId(offerId);
+    try {
+      const response = await fetch(`/api/offers/${offerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (response.status === 401) {
+        redirectToSignIn();
+        return;
+      }
+      if (!response.ok) {
+        setNotice(await errorMessage(response, "Статусот на понудата не е променет."));
+        return;
+      }
+      setAccountOffers((current) => current.map((offer) => (
+        offer.id === offerId ? { ...offer, status } : offer
+      )));
+      setNotice(
+        status === "accepted"
+          ? "Понудата е прифатена."
+          : status === "declined"
+            ? "Понудата е одбиена."
+            : "Понудата е повлечена.",
+      );
+    } catch {
+      setNotice("Статусот на понудата не е променет. Обидете се повторно.");
+    } finally {
+      setOfferMutatingId(null);
+    }
+  }
   async function toggleFavorite(id: string) {
     if (!persistedListingIds.includes(id)) {
       setFixtureFavoriteIds((current) => current.includes(id) ? current.filter((favoriteId) => favoriteId !== id) : [...current, id]);
@@ -1267,7 +1304,7 @@ export default function HomeClient() {
                 </nav>
                 {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Мои огласи</span><strong>{dashboard?.listings.total ?? ownedListings.length}</strong><small>во вашиот профил</small></article><article><span>Прегледи</span><strong>{dashboard?.views.total ?? 0}</strong><small>единствени дневни посети</small></article><article><span>Нови понуди</span><strong>{dashboard?.offers.incoming ?? accountOffers.filter((offer) => offer.direction === "incoming").length}</strong><small>примени понуди</small></article><article><span>Зачувани</span><strong>{dashboard?.favorites ?? serverFavoriteIds.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Активност во последни 30 дена</span><strong>{dashboard?.views.last30Days ?? 0} единствени прегледи</strong><small>Се бројат само одобрени огласи и најмногу една посета по оглас дневно.</small></div>{dashboard?.activity.length ? <div className="bar-chart bar-chart--live" aria-label="Прегледи на најгледаните ваши огласи">{dashboard.activity.map((item) => <i key={item.listingId} title={item.title + ": " + item.views + " прегледи"} style={{ height: Math.max(18, Math.round((item.views / Math.max(...dashboard.activity.map((row) => row.views), 1)) * 100)) + "%" }} />)}</div> : <p className="analytics-card__empty">Кога ќе има прегледи на ваши огласи, ќе се појават тука.</p>}</div>{dashboard?.activity.length ? <div className="activity-list">{dashboard.activity.slice(0, 3).map((item) => <p key={item.listingId}><span>{item.title}</span><strong>{item.views} прегледи · {item.incomingOffers} понуди</strong></p>)}</div> : null}</div>}
                 {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)}</span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
-                {accountTab === "offers" && <div className="workspace-list"><strong>Понуди и пораки</strong>{accountOffers.length ? accountOffers.map((offer) => <p key={offer.id}><span>{offer.direction === "incoming" ? "Примена" : "Испратена"} {offer.kind === "offer" ? "понуда" : "порака"}</span> {offer.message}<small>{offer.listingTitle}{offer.amountCents ? " · " + formatEuro(offer.amountCents / 100) : ""}</small></p>) : <p>Сè уште нема понуди или пораки.</p>}</div>}
+                {accountTab === "offers" && <div className="workspace-list"><strong>Понуди и пораки</strong>{accountOffers.length ? accountOffers.map((offer) => <article className="offer-row" key={offer.id}><div><span>{offer.direction === "incoming" ? "Примена" : "Испратена"} {offer.kind === "offer" ? "понуда" : "порака"}</span><p>{offer.message}</p><small>{offer.listingTitle}{offer.amountCents ? " · " + formatEuro(offer.amountCents / 100) : ""}</small></div><div className="offer-row__side"><em className={`offer-status offer-status--${offer.status}`}>{offer.status === "sent" ? "Во очекување" : offer.status === "accepted" ? "Прифатена" : offer.status === "declined" ? "Одбиена" : "Повлечена"}</em>{offer.status === "sent" && (offer.direction === "incoming" ? <div className="offer-row__actions"><button type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "accepted")}>Прифати</button><button className="offer-row__decline" type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "declined")}>Одбиј</button></div> : <button type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "withdrawn")}>{offerMutatingId === offer.id ? "Се зачувува…" : "Повлечи"}</button>)}</div></article>) : <p>Сè уште нема понуди или пораки.</p>}</div>}
                 {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong>{favoriteListings.length ? favoriteListings.map((listing) => <p key={listing.id}>{listing.title}<span>{listing.city}</span></p>) : <p>{fixtureFavoriteIds.length ? fixtureFavoriteIds.length + " демо огласи се зачувани само во оваа сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p>}</div>}
               </div>
             )}
