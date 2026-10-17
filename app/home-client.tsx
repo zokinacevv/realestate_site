@@ -93,6 +93,12 @@ type PublishForm = {
   year: string;
 };
 
+type OfferForm = {
+  kind: "inquiry" | "offer";
+  amount: string;
+  message: string;
+};
+
 type ApiListing = {
   id: string;
   title: string;
@@ -250,6 +256,10 @@ function createEmptyPublishForm(): PublishForm {
     construction: "built",
     year: "",
   };
+}
+
+function createEmptyOfferForm(): OfferForm {
+  return { kind: "inquiry", amount: "", message: "" };
 }
 
 function formatEuro(value: number) {
@@ -472,6 +482,10 @@ export default function HomeClient() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishForm, setPublishForm] = useState<PublishForm>(createEmptyPublishForm);
   const [publishing, setPublishing] = useState(false);
+  const [offerOpen, setOfferOpen] = useState(false);
+  const [offerForm, setOfferForm] = useState<OfferForm>(createEmptyOfferForm);
+  const [offerSubmitting, setOfferSubmitting] = useState(false);
+  const [offerFeedback, setOfferFeedback] = useState("");
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminFilter, setAdminFilter] = useState<AdminStatus>("pending");
   const [adminListings, setAdminListings] = useState<OwnerApiListing[]>([]);
@@ -556,6 +570,9 @@ export default function HomeClient() {
   const selectedMunicipality = skopjeMunicipalities.find((item) => item.name === advanced.municipality);
   const visibleNeighborhoods = selectedMunicipality?.neighborhoods ?? [];
   const selectedDetail = listingInventory.find((listing) => listing.id === detailListingId) ?? null;
+  const offerListing = selectedDetail && persistedListingIds.includes(selectedDetail.id)
+    ? selectedDetail
+    : null;
   const draftSearch = useMemo<SearchSnapshot>(
     () => ({ city: selectedCity, propertyType, publisherType, intent: mode, advanced, map: mapFilter }),
     [selectedCity, propertyType, publisherType, mode, advanced, mapFilter],
@@ -840,6 +857,57 @@ export default function HomeClient() {
     setDetailListingId(id);
     if (persistedListingIds.includes(id)) {
       void fetch("/api/listings/" + encodeURIComponent(id) + "/view", { method: "POST" });
+    }
+  }
+  function openOfferForm() {
+    if (!offerListing) return;
+    setOfferForm(createEmptyOfferForm());
+    setOfferFeedback("");
+    setOfferOpen(true);
+  }
+  async function handleOffer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!offerListing) {
+      setOfferOpen(false);
+      return;
+    }
+
+    const amount = Number(offerForm.amount);
+    if (offerForm.kind === "offer" && (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(Math.round(amount * 100)))) {
+      setOfferFeedback("Внесете точен износ на понудата во евра.");
+      return;
+    }
+
+    setOfferSubmitting(true);
+    setOfferFeedback("");
+    try {
+      const response = await fetch("/api/offers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listingId: offerListing.id,
+          kind: offerForm.kind,
+          amountCents: offerForm.kind === "offer" ? Math.round(amount * 100) : null,
+          message: offerForm.message.trim(),
+        }),
+      });
+      if (response.status === 401) {
+        setOfferOpen(false);
+        redirectToSignIn();
+        return;
+      }
+      if (!response.ok) {
+        setOfferFeedback(await errorMessage(response, "Пораката не може да се испрати."));
+        return;
+      }
+
+      setOfferFeedback(offerForm.kind === "offer" ? "Понудата е испратена до огласувачот." : "Пораката е испратена до огласувачот.");
+      setOfferForm(createEmptyOfferForm());
+      if (accountCreated) void loadAccount();
+    } catch {
+      setOfferFeedback("Пораката не може да се испрати. Обидете се повторно.");
+    } finally {
+      setOfferSubmitting(false);
     }
   }
   async function toggleFavorite(id: string) {
@@ -1158,6 +1226,22 @@ export default function HomeClient() {
         </div>
       )}
 
+      {offerOpen && offerListing && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOfferOpen(false); }}>
+          <section className="compact-dialog" role="dialog" aria-modal="true" aria-labelledby="offer-title">
+            <header className="compact-dialog__header"><div><p>КОНТАКТИРАЈ ОГЛАСУВАЧ</p><h2 id="offer-title">{offerListing.title}</h2></div><button className="dialog-close" type="button" aria-label="Затвори форма за понуда" onClick={() => setOfferOpen(false)}><Icon name="close" size={19} /></button></header>
+            <form className="offer-form" onSubmit={handleOffer}>
+              <label className="field-block"><span>Што испраќате?</span><select value={offerForm.kind} onChange={(event) => setOfferForm((current) => ({ ...current, kind: event.target.value as OfferForm["kind"], amount: "" }))}><option value="inquiry">Порака / прашање</option><option value="offer">Конкретна понуда</option></select></label>
+              {offerForm.kind === "offer" && <label className="field-block"><span>Вашата понуда во €</span><input required min="1" type="number" inputMode="decimal" placeholder="на пр. 145000" value={offerForm.amount} onChange={(event) => setOfferForm((current) => ({ ...current, amount: event.target.value }))} /></label>}
+              <label className="field-block field-block--wide"><span>{offerForm.kind === "offer" ? "Порака со понудата" : "Порака"}</span><textarea required minLength={2} maxLength={2000} rows={5} placeholder="на пр. Здраво, заинтересиран/а сум за огласот. Дали е сè уште достапен?" value={offerForm.message} onChange={(event) => setOfferForm((current) => ({ ...current, message: event.target.value }))} /></label>
+              <p className="form-helper">Огласувачот ќе ја види пораката во својот профил. Контакт-податоците не се прикажуваат јавно.</p>
+              {offerFeedback && <p className={offerFeedback.includes("испрат") ? "offer-feedback offer-feedback--success" : "offer-feedback"}>{offerFeedback}</p>}
+              <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => setOfferOpen(false)} disabled={offerSubmitting}>Откажи</button><button className="button button--primary" type="submit" disabled={offerSubmitting}>{offerSubmitting ? "Се испраќа…" : offerForm.kind === "offer" ? "Испрати понуда" : "Испрати порака"} <Icon name="arrow" size={18} /></button></div>
+            </form>
+          </section>
+        </div>
+      )}
+
       {accountOpen && (
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccountOpen(false); }}>
           <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title">
@@ -1227,7 +1311,7 @@ export default function HomeClient() {
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailListingId(null); }}>
           <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
             <div className="detail-dialog__image"><Image src="/images/doma-hero.png" alt="" fill sizes="(max-width: 720px) 100vw, 700px" style={{ objectFit: "cover", objectPosition: selectedDetail.photoPosition }} /><div /><button className="dialog-close detail-dialog__close" type="button" aria-label="Затвори детали" onClick={() => setDetailListingId(null)}><Icon name="close" size={19} /></button><span>{selectedDetail.badge ?? "ДЕМО ОГЛАС"}</span></div>
-            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2><p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div>
+            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2><p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><div className="detail-dialog__actions">{offerListing ? <button className="button button--outline" type="button" onClick={openOfferForm}>Прати порака / понуда</button> : <small>За демо огласите не се испраќаат пораки или понуди.</small>}<button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div></div>
           </section>
         </div>
       )}

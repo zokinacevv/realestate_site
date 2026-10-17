@@ -1783,6 +1783,43 @@ select:focus-visible {
   padding: 24px 27px 27px;
 }
 
+.offer-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  padding: 24px 27px 27px;
+}
+
+.offer-form textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid #d8e1db;
+  border-radius: 8px;
+  padding: 10px 11px;
+  outline: none;
+  background: var(--white);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.offer-form textarea:focus { border-color: var(--forest); box-shadow: 0 0 0 3px rgba(64, 134, 111, 0.13); }
+
+.offer-feedback {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #f9e9e7;
+  color: #914e48;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.offer-feedback--success { background: #e7f2eb; color: #246647; }
+
 .field-block--wide { grid-column: 1 / -1; }
 
 .form-helper {
@@ -2199,6 +2236,8 @@ select:focus-visible {
 }
 
 .detail-dialog__footer > span { color: #5f716a; font-size: 11px; font-weight: 750; }
+.detail-dialog__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.detail-dialog__actions small { max-width: 210px; color: #718079; font-size: 10px; line-height: 1.4; text-align: right; }
 
 @media (max-width: 1100px) {
   .partner-rail { grid-template-columns: repeat(5, 185px); }
@@ -2237,7 +2276,8 @@ select:focus-visible {
   .detail-dialog h2 { font-size: 27px; }
   .advanced-filters { padding: 20px 16px; }
   .advanced-filter-grid,
-  .publish-form { grid-template-columns: 1fr; gap: 11px; }
+  .publish-form,
+  .offer-form { grid-template-columns: 1fr; gap: 11px; }
   .field-block--wide { grid-column: auto; }
   .map-teaser { min-height: 0; padding: 21px 16px; }
   .map-teaser .button { width: 100%; }
@@ -2252,6 +2292,7 @@ select:focus-visible {
   .map-dialog__footer { align-items: stretch; flex-direction: column; padding: 13px 16px; }
   .map-dialog__footer .button { width: 100%; }
   .publish-form { padding: 20px 16px 22px; }
+  .offer-form { padding: 20px 16px 22px; }
   .compact-dialog__actions { flex-direction: column-reverse; }
   .compact-dialog__actions .button { width: 100%; }
   .account-create { padding: 22px 16px; }
@@ -2270,6 +2311,8 @@ select:focus-visible {
   .detail-dialog__image { height: 210px; }
   .detail-dialog__body { padding: 21px 16px; }
   .detail-dialog__footer { align-items: stretch; flex-direction: column; }
+  .detail-dialog__actions { flex-direction: column; }
+  .detail-dialog__actions small { max-width: none; text-align: left; }
   .detail-dialog__footer .button { width: 100%; }
   .result-toolbar { align-items: flex-start; flex-direction: column; gap: 7px; }
 }
