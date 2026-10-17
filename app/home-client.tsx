@@ -1,9 +1,11 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -83,11 +85,90 @@ type PublishForm = {
   intent: ListingIntent;
   publisherType: PublisherType;
   price: string;
+  areaM2: string;
   address: string;
   municipality: string;
   neighborhood: string;
   construction: ConstructionState;
   year: string;
+};
+
+type ApiListing = {
+  id: string;
+  title: string;
+  description: string;
+  intent: ListingIntent;
+  propertyType: string;
+  publisherType: PublisherType;
+  priceAmountCents: number;
+  currency: string;
+  pricePeriod: "total" | "monthly";
+  city: string;
+  municipality: string | null;
+  neighborhood: string | null;
+  addressLine: string | null;
+  locationPrecision?: string | null;
+  latitudeE6: number | null;
+  longitudeE6: number | null;
+  areaM2: number;
+  rooms: number | null;
+  floorNumber: number | null;
+  floorTotal: number | null;
+  elevator: boolean | null;
+  parking: string | null;
+  heating: string | null;
+  cooling: string | null;
+  constructionState: ConstructionState;
+  builtYear: number | null;
+  completionDate: string | null;
+  features: string[];
+  publishedAt?: string | null;
+};
+
+type OwnerApiListing = ApiListing & {
+  addressLine: string;
+  exactLocationPublic: boolean;
+  status: "pending" | "approved" | "rejected" | "archived";
+  moderationNote: string | null;
+  submittedAt: string | null;
+  updatedAt: string;
+};
+
+type AccountProfile = {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  fullName: string | null;
+  createdAt: string | null;
+};
+
+type CurrentUserPayload = {
+  profile: AccountProfile;
+  permissions?: {
+    canModerateListings?: boolean;
+  };
+};
+
+type AdminStatus = OwnerApiListing["status"];
+type AdminAccess = "checking" | "granted" | "denied" | "error";
+
+type DashboardData = {
+  listings: { total: number; pending: number; approved: number; rejected: number; archived: number };
+  favorites: number;
+  offers: { incoming: number; outgoing: number };
+};
+
+type AccountOffer = {
+  id: string;
+  listingId: string;
+  listingTitle: string;
+  direction: "incoming" | "outgoing";
+  kind: "inquiry" | "offer";
+  amountCents: number | null;
+  currency: string;
+  message: string;
+  status: string;
+  createdAt: string;
 };
 
 const publisherLabels: Record<PublisherFilter, string> = {
@@ -147,6 +228,7 @@ function createEmptyPublishForm(): PublishForm {
     intent: "sale",
     publisherType: "owner",
     price: "",
+    areaM2: "",
     address: "",
     municipality: "Аеродром",
     neighborhood: "Јане Сандански",
@@ -172,6 +254,52 @@ function statusLabel(status: ListingStatus) {
   if (status === "approved") return "Одобрен";
   if (status === "pending") return "Чека проверка";
   return "Одбиен";
+}
+
+function ownerStatusLabel(status: OwnerApiListing["status"]) {
+  if (status === "archived") return "Архивиран";
+  return statusLabel(status);
+}
+
+function toUiListing(listing: ApiListing): Listing {
+  const propertyType = propertyTypes.includes(listing.propertyType as PropertyType)
+    ? (listing.propertyType as PropertyType)
+    : "Деловен простор";
+
+  return {
+    id: listing.id,
+    title: listing.title,
+    intent: listing.intent,
+    propertyType,
+    publisherType: listing.publisherType,
+    publisherName: "Регистриран огласувач",
+    city: listing.city,
+    municipality: listing.municipality ?? "Неодредена општина",
+    neighborhood: listing.neighborhood ?? "Неодредена населба",
+    address: listing.addressLine ?? "Прецизната адреса е достапна по контакт.",
+    priceEur: listing.priceAmountCents / 100,
+    areaM2: listing.areaM2,
+    rooms: listing.rooms ?? undefined,
+    floor: listing.floorNumber == null ? undefined : String(listing.floorNumber),
+    elevator: listing.elevator ?? undefined,
+    parking: listing.parking ?? "Не е наведено",
+    heating: listing.heating ?? "Не е наведено",
+    cooling: listing.cooling ?? "Не е наведено",
+    construction: listing.constructionState,
+    builtYear: listing.builtYear ?? undefined,
+    completionText: listing.completionDate ? "Планирано завршување: " + listing.completionDate : undefined,
+    views: 0,
+    status: "approved",
+    photoPosition: "50% center",
+    map: { x: 50, y: 45 },
+    features: listing.features,
+    badge: listing.constructionState === "in_progress" ? "ВО ТЕК НА ГРАДБА" : "ОДОБРЕН ОГЛАС",
+  };
+}
+
+async function errorMessage(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+  return typeof payload?.error === "string" ? payload.error : fallback;
 }
 
 function pointInsidePolygon(point: MapPoint, polygon: MapPoint[]) {
@@ -288,7 +416,7 @@ function ListingCard({
       <div className="listing-card__body">
         <div className="listing-card__card-topline"><p className="listing-card__location"><Icon name="pin" size={15} />{listing.municipality + " · " + listing.neighborhood}</p><span className="listing-card__type">{listing.propertyType}</span></div>
         <h3>{listing.title}</h3>
-        <p className="listing-card__address"><Icon name="pin" size={14} />Демо адреса: {listing.address}</p>
+        <p className="listing-card__address"><Icon name="pin" size={14} />Адреса: {listing.address}</p>
         <p className="listing-card__details">{listing.areaM2 + " m²"}{listing.rooms ? " · " + listing.rooms + " соби" : ""}{listing.floor ? " · " + listing.floor + " кат" : ""}</p>
         <div className="listing-card__property-row"><span>{constructionLabel(listing)}</span><span>{listing.elevator ? "Лифт" : "Без лифт"}</span></div>
         <p className="listing-card__publisher"><span>{publisherLabels[listing.publisherType]}</span>{listing.publisherName}</p>
@@ -299,6 +427,7 @@ function ListingCard({
 }
 
 export default function HomeClient() {
+  const router = useRouter();
   const [mode, setMode] = useState<ListingIntent>("sale");
   const [selectedCity, setSelectedCity] = useState("Скопје");
   const [propertyType, setPropertyType] = useState<PropertyFilter>("Стан");
@@ -307,22 +436,76 @@ export default function HomeClient() {
   const [mapFilter, setMapFilter] = useState<MapFilter>(createEmptyMapFilter);
   const [appliedSearch, setAppliedSearch] = useState<SearchSnapshot | null>(null);
   const [listingInventory, setListingInventory] = useState<Listing[]>(initialListings);
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [fixtureFavoriteIds, setFixtureFavoriteIds] = useState<string[]>([]);
+  const [serverFavoriteIds, setServerFavoriteIds] = useState<string[]>([]);
+  const [persistedListingIds, setPersistedListingIds] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountCreated, setAccountCreated] = useState(false);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [ownedListings, setOwnedListings] = useState<OwnerApiListing[]>([]);
+  const [favoriteListings, setFavoriteListings] = useState<ApiListing[]>([]);
+  const [accountOffers, setAccountOffers] = useState<AccountOffer[]>([]);
   const [accountTab, setAccountTab] = useState<"overview" | "listings" | "offers" | "saved">("overview");
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishForm, setPublishForm] = useState<PublishForm>(createEmptyPublishForm);
+  const [publishing, setPublishing] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
-  const [adminFilter, setAdminFilter] = useState<ListingStatus | "all">("pending");
+  const [adminFilter, setAdminFilter] = useState<AdminStatus>("pending");
+  const [adminListings, setAdminListings] = useState<OwnerApiListing[]>([]);
+  const [adminAccess, setAdminAccess] = useState<AdminAccess>("checking");
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminActionMessage, setAdminActionMessage] = useState("");
+  const [adminNote, setAdminNote] = useState("");
+  const [adminMutatingListingId, setAdminMutatingListingId] = useState<string | null>(null);
   const [detailListingId, setDetailListingId] = useState<string | null>(null);
   const [mapFocusId, setMapFocusId] = useState<string | null>(null);
   const [isDrawingMap, setIsDrawingMap] = useState(false);
   const mapRef = useRef<SVGSVGElement>(null);
+  const adminRequestIdRef = useRef(0);
+  const favoriteIds = useMemo(
+    () => Array.from(new Set([...fixtureFavoriteIds, ...serverFavoriteIds])),
+    [fixtureFavoriteIds, serverFavoriteIds],
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPublicListings() {
+      try {
+        const response = await fetch("/api/listings?limit=80");
+        if (!response.ok) return;
+        const payload = (await response.json()) as { listings?: ApiListing[] };
+        const databaseListings = Array.isArray(payload.listings)
+          ? payload.listings.map(toUiListing)
+          : [];
+        if (!active) return;
+
+        const databaseIds = new Set(databaseListings.map((listing) => listing.id));
+        const fixtureIds = new Set(initialListings.map((listing) => listing.id));
+        setPersistedListingIds(databaseListings.map((listing) => listing.id));
+        setListingInventory((current) => {
+          const localListings = current.filter(
+            (listing) => !databaseIds.has(listing.id) && !fixtureIds.has(listing.id),
+          );
+          return [...databaseListings, ...localListings, ...initialListings];
+        });
+      } catch {
+        // The fixture inventory remains available if the database is unavailable.
+      }
+    }
+
+    void loadPublicListings();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const searchLabel = mode === "sale" ? "Купување" : "Изнајмување";
   const selectedMunicipality = skopjeMunicipalities.find((item) => item.name === advanced.municipality);
@@ -350,7 +533,6 @@ export default function HomeClient() {
     if (scopedListings.length === 0) return { count: 0, value: 0 };
     return { count: scopedListings.length, value: Math.round(scopedListings.reduce((sum, listing) => sum + pricePerSquareMeter(listing), 0) / scopedListings.length) };
   }, [listingInventory, selectedCity, mode, advanced.municipality, advanced.neighborhood]);
-  const adminListings = listingInventory.filter((listing) => adminFilter === "all" || listing.status === adminFilter);
   const mapBaseSearch = useMemo<SearchSnapshot>(
     () => ({ ...draftSearch, map: createEmptyMapFilter() }),
     [draftSearch],
@@ -394,8 +576,249 @@ export default function HomeClient() {
     setNotice("Избран е типот: " + (type === "all" ? "сите типови" : type.toLowerCase()) + ". Додадете детали со „Продолжи“.");
     window.setTimeout(scrollToListings, 50);
   }
-  function toggleFavorite(id: string) {
-    setFavorites((current) => current.includes(id) ? current.filter((favoriteId) => favoriteId !== id) : [...current, id]);
+  function redirectToSignIn() {
+    router.push("/signin-with-chatgpt?return_to=/");
+  }
+  async function refreshFavorites() {
+    const response = await fetch("/api/me/favorites");
+    if (response.status === 401) {
+      redirectToSignIn();
+      return false;
+    }
+    if (!response.ok) return false;
+    const payload = (await response.json()) as { listings?: ApiListing[] };
+    const listings = Array.isArray(payload.listings) ? payload.listings : [];
+    setFavoriteListings(listings);
+    setServerFavoriteIds(listings.map((listing) => listing.id));
+    return true;
+  }
+  async function loadAccount() {
+    setAccountLoading(true);
+    try {
+      const profileResponse = await fetch("/api/me");
+      if (profileResponse.status === 401) {
+        redirectToSignIn();
+        return;
+      }
+      if (!profileResponse.ok) {
+        setNotice(await errorMessage(profileResponse, "Профилот не може да се вчита во моментов."));
+        return;
+      }
+
+      const profilePayload = (await profileResponse.json()) as { profile: AccountProfile };
+      setAccountProfile(profilePayload.profile);
+      setAccountCreated(true);
+
+      const [listingsResponse, dashboardResponse, favoritesResponse, offersResponse] = await Promise.all([
+        fetch("/api/me/listings"),
+        fetch("/api/me/dashboard"),
+        fetch("/api/me/favorites"),
+        fetch("/api/offers"),
+      ]);
+      if ([listingsResponse, dashboardResponse, favoritesResponse, offersResponse].some((response) => response.status === 401)) {
+        redirectToSignIn();
+        return;
+      }
+
+      if (listingsResponse.ok) {
+        const payload = (await listingsResponse.json()) as { listings?: OwnerApiListing[] };
+        setOwnedListings(Array.isArray(payload.listings) ? payload.listings : []);
+      }
+      if (dashboardResponse.ok) {
+        const payload = (await dashboardResponse.json()) as DashboardData;
+        setDashboard(payload);
+      }
+      if (favoritesResponse.ok) {
+        const payload = (await favoritesResponse.json()) as { listings?: ApiListing[] };
+        const listings = Array.isArray(payload.listings) ? payload.listings : [];
+        setFavoriteListings(listings);
+        setServerFavoriteIds(listings.map((listing) => listing.id));
+      }
+      if (offersResponse.ok) {
+        const payload = (await offersResponse.json()) as { offers?: AccountOffer[] };
+        setAccountOffers(Array.isArray(payload.offers) ? payload.offers : []);
+      }
+    } catch {
+      setNotice("Профилот не може да се вчита. Обидете се повторно.");
+    } finally {
+      setAccountLoading(false);
+    }
+  }
+  function openAccount() {
+    setAccountOpen(true);
+    void loadAccount();
+  }
+  function closeAdmin() {
+    adminRequestIdRef.current += 1;
+    setAdminOpen(false);
+    setAdminLoading(false);
+    setAdminMutatingListingId(null);
+  }
+  async function loadAdminListings(status: AdminStatus, requestId?: number) {
+    const activeRequestId = requestId ?? adminRequestIdRef.current + 1;
+    if (requestId === undefined) adminRequestIdRef.current = activeRequestId;
+    setAdminFilter(status);
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await fetch("/api/admin/listings?status=" + encodeURIComponent(status));
+      if (response.status === 401) {
+        if (activeRequestId === adminRequestIdRef.current) closeAdmin();
+        redirectToSignIn();
+        return;
+      }
+      if (response.status === 403) {
+        if (activeRequestId === adminRequestIdRef.current) {
+          setAdminAccess("denied");
+          setAdminListings([]);
+        }
+        return;
+      }
+      if (!response.ok) {
+        if (activeRequestId === adminRequestIdRef.current) {
+          setAdminError(await errorMessage(response, "Огласите не може да се вчитаат."));
+        }
+        return;
+      }
+
+      const payload = (await response.json()) as { listings?: OwnerApiListing[] };
+      if (activeRequestId === adminRequestIdRef.current) {
+        setAdminListings(Array.isArray(payload.listings) ? payload.listings : []);
+        setAdminAccess("granted");
+      }
+    } catch {
+      if (activeRequestId === adminRequestIdRef.current) {
+        setAdminError("Огласите не може да се вчитаат. Обидете се повторно.");
+      }
+    } finally {
+      if (activeRequestId === adminRequestIdRef.current) setAdminLoading(false);
+    }
+  }
+  async function openAdmin() {
+    const requestId = adminRequestIdRef.current + 1;
+    adminRequestIdRef.current = requestId;
+    setAdminOpen(true);
+    setAdminFilter("pending");
+    setAdminAccess("checking");
+    setAdminLoading(true);
+    setAdminError("");
+    setAdminActionMessage("");
+    setAdminListings([]);
+    try {
+      const response = await fetch("/api/me");
+      if (response.status === 401) {
+        if (requestId === adminRequestIdRef.current) closeAdmin();
+        redirectToSignIn();
+        return;
+      }
+      if (!response.ok) {
+        if (requestId === adminRequestIdRef.current) {
+          setAdminAccess("error");
+          setAdminError(await errorMessage(response, "Администраторскиот пристап не може да се провери."));
+        }
+        return;
+      }
+
+      const payload = (await response.json()) as CurrentUserPayload;
+      if (requestId !== adminRequestIdRef.current) return;
+      if (!payload.permissions?.canModerateListings) {
+        setAdminAccess("denied");
+        return;
+      }
+
+      setAdminAccess("granted");
+      await loadAdminListings("pending", requestId);
+    } catch {
+      if (requestId === adminRequestIdRef.current) {
+        setAdminAccess("error");
+        setAdminError("Администраторскиот пристап не може да се провери. Обидете се повторно.");
+      }
+    } finally {
+      if (requestId === adminRequestIdRef.current) setAdminLoading(false);
+    }
+  }
+  async function moderateListing(id: string, status: "approved" | "rejected" | "archived") {
+    const requestId = adminRequestIdRef.current;
+    const note = adminNote.trim() || null;
+    setAdminMutatingListingId(id);
+    setAdminError("");
+    setAdminActionMessage("");
+    try {
+      const response = await fetch("/api/admin/listings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listingId: id,
+          status,
+          note,
+        }),
+      });
+      if (response.status === 401) {
+        if (requestId === adminRequestIdRef.current) closeAdmin();
+        redirectToSignIn();
+        return;
+      }
+      if (response.status === 403) {
+        if (requestId === adminRequestIdRef.current) setAdminAccess("denied");
+        return;
+      }
+      if (!response.ok) {
+        if (requestId === adminRequestIdRef.current) {
+          setAdminError(await errorMessage(response, "Промената не може да се зачува."));
+        }
+        return;
+      }
+      if (requestId !== adminRequestIdRef.current) return;
+
+      setAdminNote("");
+      setAdminActionMessage(
+        status === "approved"
+          ? "Огласот е одобрен и е достапен во јавното пребарување."
+          : status === "rejected"
+            ? note
+              ? "Огласот е одбиен со забелешката што ја внесовте."
+              : "Огласот е одбиен."
+            : "Огласот е архивиран и веќе не е јавен.",
+      );
+      setAdminMutatingListingId(null);
+      await loadAdminListings(adminFilter);
+    } catch {
+      if (requestId === adminRequestIdRef.current) {
+        setAdminError("Промената не може да се зачува. Обидете се повторно.");
+      }
+    } finally {
+      if (requestId === adminRequestIdRef.current) setAdminMutatingListingId(null);
+    }
+  }
+  async function toggleFavorite(id: string) {
+    if (!persistedListingIds.includes(id)) {
+      setFixtureFavoriteIds((current) => current.includes(id) ? current.filter((favoriteId) => favoriteId !== id) : [...current, id]);
+      setNotice("Демо огласот е зачуван само во оваа сесија.");
+      return;
+    }
+
+    const saved = serverFavoriteIds.includes(id);
+    try {
+      const response = saved
+        ? await fetch("/api/me/favorites?listingId=" + encodeURIComponent(id), { method: "DELETE" })
+        : await fetch("/api/me/favorites", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ listingId: id }),
+          });
+      if (response.status === 401) {
+        redirectToSignIn();
+        return;
+      }
+      if (!response.ok) {
+        setNotice(await errorMessage(response, "Омилениот оглас не може да се зачува."));
+        return;
+      }
+      setServerFavoriteIds((current) => saved ? current.filter((favoriteId) => favoriteId !== id) : [...new Set([...current, id])]);
+      void refreshFavorites();
+    } catch {
+      setNotice("Омилениот оглас не може да се зачува. Обидете се повторно.");
+    }
   }
   function updateAdvanced<K extends keyof AdvancedFilters>(key: K, value: AdvancedFilters[K]) {
     setAdvanced((current) => ({ ...current, [key]: value }));
@@ -437,56 +860,71 @@ export default function HomeClient() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     setIsDrawingMap(false);
   }
-  function handlePublish(event: FormEvent<HTMLFormElement>) {
+  async function handlePublish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const price = Number(publishForm.price);
-    if (!Number.isFinite(price) || price <= 0) {
+    const areaM2 = Number(publishForm.areaM2);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isSafeInteger(Math.round(price * 100))) {
       setNotice("Внесете валидна точна цена за огласот.");
       return;
     }
-    const neighborhood = publishForm.neighborhood || "Непрецизирана населба";
-    const municipality = publishForm.municipality || "Непрецизирана општина";
-    const newListing: Listing = {
-      id: "local-" + Date.now(),
-      title: publishForm.title || publishForm.propertyType + " во " + neighborhood,
-      intent: publishForm.intent,
-      propertyType: publishForm.propertyType,
-      publisherType: publishForm.publisherType,
-      publisherName: "Мој демо профил",
-      city: selectedCity,
-      municipality,
-      neighborhood,
-      address: publishForm.address,
-      priceEur: price,
-      areaM2: 60,
-      rooms: 2,
-      floor: "Не е внесено",
-      elevator: false,
-      parking: "Не е достапно",
-      heating: "Не е внесено",
-      cooling: "Не е внесено",
-      construction: publishForm.construction,
-      builtYear: publishForm.construction === "built" ? Number(publishForm.year) || undefined : undefined,
-      completionText: publishForm.construction === "in_progress" ? "Рокот ќе се внесе при проверка" : undefined,
-      views: 0,
-      status: "pending",
-      photoPosition: "50% center",
-      map: { x: 50, y: 45 },
-      features: ["Локално создаден демо оглас"],
-      badge: "ЧЕКА ПРОВЕРКА",
-    };
-    setListingInventory((current) => [newListing, ...current]);
-    setPublishOpen(false);
-    setPublishForm(createEmptyPublishForm());
-    setNotice("Демо огласот е додаден со точна цена и адреса и сега чека админ-проверка.");
-  }
-  function updateListingStatus(id: string, status: ListingStatus) {
-    setListingInventory((current) => current.map((listing) => listing.id === id ? { ...listing, status } : listing));
-    setNotice("Статусот на демо огласот е променет во: " + statusLabel(status) + ".");
-  }
-  function deleteListing(id: string) {
-    setListingInventory((current) => current.filter((listing) => listing.id !== id));
-    setNotice("Демо огласот е избришан од локалниот админ-преглед.");
+    if (!Number.isInteger(areaM2) || areaM2 <= 0) {
+      setNotice("Внесете точна квадратура во цели m².");
+      return;
+    }
+
+    const builtYear = Number(publishForm.year);
+    if (publishForm.construction === "built" && (!Number.isInteger(builtYear) || builtYear < 1800 || builtYear > 2100)) {
+      setNotice("Внесете валидна година на градба.");
+      return;
+    }
+
+    setPublishing(true);
+    try {
+      const response = await fetch("/api/listings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: publishForm.title.trim(),
+          intent: publishForm.intent,
+          propertyType: publishForm.propertyType,
+          publisherType: publishForm.publisherType,
+          priceAmountCents: Math.round(price * 100),
+          currency: "EUR",
+          pricePeriod: publishForm.intent === "rent" ? "monthly" : "total",
+          city: selectedCity,
+          municipality: publishForm.municipality || null,
+          neighborhood: publishForm.neighborhood || null,
+          addressLine: publishForm.address.trim(),
+          exactLocationPublic: false,
+          areaM2,
+          constructionState: publishForm.construction,
+          builtYear: publishForm.construction === "built" ? builtYear : null,
+          features: [],
+        }),
+      });
+      if (response.status === 401) {
+        redirectToSignIn();
+        return;
+      }
+      if (!response.ok) {
+        setNotice(await errorMessage(response, "Огласот не може да се испрати на проверка."));
+        return;
+      }
+
+      const payload = (await response.json()) as { listing?: OwnerApiListing };
+      const createdListing = payload.listing;
+      if (createdListing) {
+        setOwnedListings((current) => [createdListing, ...current.filter((listing) => listing.id !== createdListing.id)]);
+      }
+      setPublishOpen(false);
+      setPublishForm(createEmptyPublishForm());
+      setNotice("Огласот е зачуван со точна цена, адреса и квадратура и сега чека админ-проверка.");
+    } catch {
+      setNotice("Огласот не може да се испрати. Обидете се повторно.");
+    } finally {
+      setPublishing(false);
+    }
   }
   function filterByPartner(type: PublisherType) {
     setPublisherType(type);
@@ -504,11 +942,11 @@ export default function HomeClient() {
             <a href="#oglasi" onClick={() => setMode("sale")}>Купи</a>
             <a href="#oglasi" onClick={() => setMode("rent")}>Изнајми</a>
             <a href="#partneri">Партнери</a>
-            <button type="button" className="doma-nav__button" onClick={() => setAdminOpen(true)}>Админ демо</button>
+            <button type="button" className="doma-nav__button" onClick={() => void openAdmin()}>Админ</button>
           </nav>
           <div className="doma-header__actions">
             <button className="button button--quiet" type="button" onClick={() => setPublishOpen(true)}>Објави оглас</button>
-            <button className="button button--header" type="button" onClick={() => setAccountOpen(true)}>Најави се</button>
+            <button className="button button--header" type="button" onClick={openAccount}>{accountCreated ? "Мој профил" : "Најави се"}</button>
           </div>
           <button className="doma-menu-button" type="button" aria-label={menuOpen ? "Затвори мени" : "Отвори мени"} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? "close" : "menu"} size={22} /></button>
         </div>
@@ -518,7 +956,7 @@ export default function HomeClient() {
             <a href="#oglasi" onClick={() => { setMode("rent"); setMenuOpen(false); }}>Изнајми</a>
             <a href="#partneri" onClick={() => setMenuOpen(false)}>Партнери</a>
             <button className="button button--primary" type="button" onClick={() => { setPublishOpen(true); setMenuOpen(false); }}>Објави оглас</button>
-            <button className="button button--ghost-light" type="button" onClick={() => { setAdminOpen(true); setMenuOpen(false); }}>Админ демо</button>
+            <button className="button button--ghost-light" type="button" onClick={() => { void openAdmin(); setMenuOpen(false); }}>Админ</button>
           </nav>
         )}
       </header>
@@ -565,8 +1003,8 @@ export default function HomeClient() {
               <button className="button button--outline" type="button" onClick={() => setAdvancedOpen(true)}><Icon name="filter" size={18} /> Промени филтри</button>
             </div>
             {appliedSearch && <div className="result-toolbar"><span><strong>{filteredListings.length}</strong> огласи</span><button type="button" onClick={() => { setAppliedSearch(null); resetAdvancedFilters(); }}>Исчисти пребарување</button></div>}
-            <div className="listing-grid">{filteredListings.length > 0 ? filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} favorite={favorites.includes(listing.id)} onFavorite={() => toggleFavorite(listing.id)} onOpen={() => setDetailListingId(listing.id)} />) : <div className="listing-empty">Нема одобрени демо огласи со оваа комбинација. Пробајте друга општина, тип или исчистете ја нацртаната зона на мапата.</div>}</div>
-            <p className="demo-note">Сите цени, адреси, статуси и бројки во оваа верзија се примерни демо-податоци за проверка на искуството.</p>
+            <div className="listing-grid">{filteredListings.length > 0 ? filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} favorite={favoriteIds.includes(listing.id)} onFavorite={() => void toggleFavorite(listing.id)} onOpen={() => setDetailListingId(listing.id)} />) : <div className="listing-empty">Нема одобрени огласи со оваа комбинација. Пробајте друга општина, тип или исчистете ја нацртаната зона на мапата.</div>}</div>
+            <p className="demo-note">Примерните демо огласи остануваат за проверка на искуството; новите одобрени огласи се вчитуваат од базата.</p>
           </div>
         </section>
 
@@ -596,11 +1034,11 @@ export default function HomeClient() {
         </section>
 
         <section className="doma-cta">
-          <div className="doma-shell doma-cta__inner"><div><p className="eyebrow eyebrow--light">ЗА СОПСТВЕНИЦИ, АГЕНЦИИ И ИНВЕСТИТОРИ</p><h2>Објавете имот со податоци што се навистина корисни.</h2><p>Во демо-формата се задолжителни точна цена, адреса и статус на градба. Профилот и админ-прегледот подготвуваат основа за следната фаза.</p></div><div className="doma-cta__actions"><button className="button button--light" type="button" onClick={() => setPublishOpen(true)}>Објавете оглас <Icon name="arrow" size={18} /></button><button className="button button--ghost-light" type="button" onClick={() => setAccountOpen(true)}>Креирај профил</button></div></div>
+          <div className="doma-shell doma-cta__inner"><div><p className="eyebrow eyebrow--light">ЗА СОПСТВЕНИЦИ, АГЕНЦИИ И ИНВЕСТИТОРИ</p><h2>Објавете имот со податоци што се навистина корисни.</h2><p>За нов оглас се задолжителни точна цена, адреса, квадратура и статус на градба. Профилот безбедно се врзува со вашата најава.</p></div><div className="doma-cta__actions"><button className="button button--light" type="button" onClick={() => setPublishOpen(true)}>Објавете оглас <Icon name="arrow" size={18} /></button><button className="button button--ghost-light" type="button" onClick={openAccount}>Мој профил</button></div></div>
         </section>
       </main>
 
-      <footer className="doma-footer"><div className="doma-shell doma-footer__inner"><a className="doma-logo doma-logo--footer" href="#pocetna" aria-label="DOMA, почетна"><span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>DOMA</a><p>Прототип за појасно пребарување недвижности во Македонија.</p><button className="footer-admin-link" type="button" onClick={() => setAdminOpen(true)}>Отвори админ демо</button><span>© 2026 DOMA</span></div></footer>
+      <footer className="doma-footer"><div className="doma-shell doma-footer__inner"><a className="doma-logo doma-logo--footer" href="#pocetna" aria-label="DOMA, почетна"><span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>DOMA</a><p>Прототип за појасно пребарување недвижности во Македонија.</p><button className="footer-admin-link" type="button" onClick={() => void openAdmin()}>Отвори админ</button><span>© 2026 DOMA</span></div></footer>
 
       {advancedOpen && (
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdvancedOpen(false); }}>
@@ -648,20 +1086,21 @@ export default function HomeClient() {
       {publishOpen && (
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishOpen(false); }}>
           <section className="compact-dialog" role="dialog" aria-modal="true" aria-labelledby="publish-title">
-            <header className="compact-dialog__header"><div><p>ОБЈАВИ ОГЛАС · ДЕМО</p><h2 id="publish-title">Внесете ги основните точни податоци.</h2></div><button className="dialog-close" type="button" aria-label="Затвори форма за оглас" onClick={() => setPublishOpen(false)}><Icon name="close" size={19} /></button></header>
+            <header className="compact-dialog__header"><div><p>ОБЈАВИ ОГЛАС</p><h2 id="publish-title">Внесете ги основните точни податоци.</h2></div><button className="dialog-close" type="button" aria-label="Затвори форма за оглас" onClick={() => setPublishOpen(false)}><Icon name="close" size={19} /></button></header>
             <form className="publish-form" onSubmit={handlePublish}>
               <label className="field-block field-block--wide"><span>Наслов на оглас</span><input required placeholder="на пр. Трособен стан во Аеродром" value={publishForm.title} onChange={(event) => setPublishForm((current) => ({ ...current, title: event.target.value }))} /></label>
               <label className="field-block"><span>Тип</span><select value={publishForm.propertyType} onChange={(event) => setPublishForm((current) => ({ ...current, propertyType: event.target.value as PropertyType }))}>{propertyTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
               <label className="field-block"><span>Намена</span><select value={publishForm.intent} onChange={(event) => setPublishForm((current) => ({ ...current, intent: event.target.value as ListingIntent }))}><option value="sale">Продажба</option><option value="rent">Изнајмување</option></select></label>
               <label className="field-block"><span>Кој објавува</span><select value={publishForm.publisherType} onChange={(event) => setPublishForm((current) => ({ ...current, publisherType: event.target.value as PublisherType }))}><option value="owner">Приватен сопственик</option><option value="agency">Агенција</option><option value="developer">Инвеститор / фирма</option></select></label>
               <label className="field-block"><span>Точна цена во €</span><input required min="1" type="number" inputMode="decimal" placeholder="на пр. 142000" value={publishForm.price} onChange={(event) => setPublishForm((current) => ({ ...current, price: event.target.value }))} /></label>
+              <label className="field-block"><span>Квадратура во m²</span><input required min="1" step="1" type="number" inputMode="numeric" placeholder="на пр. 74" value={publishForm.areaM2} onChange={(event) => setPublishForm((current) => ({ ...current, areaM2: event.target.value }))} /></label>
               <label className="field-block field-block--wide"><span>Точна адреса</span><input required placeholder="улица, број, општина, град" value={publishForm.address} onChange={(event) => setPublishForm((current) => ({ ...current, address: event.target.value }))} /></label>
               <label className="field-block"><span>Општина</span><select value={publishForm.municipality} onChange={(event) => setPublishForm((current) => ({ ...current, municipality: event.target.value, neighborhood: "" }))}>{skopjeMunicipalities.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
               <label className="field-block"><span>Населба</span><select value={publishForm.neighborhood} onChange={(event) => setPublishForm((current) => ({ ...current, neighborhood: event.target.value }))}>{(skopjeMunicipalities.find((item) => item.name === publishForm.municipality)?.neighborhoods ?? []).map((item) => <option key={item}>{item}</option>)}</select></label>
               <label className="field-block"><span>Состојба</span><select value={publishForm.construction} onChange={(event) => setPublishForm((current) => ({ ...current, construction: event.target.value as ConstructionState }))}><option value="built">Изградено</option><option value="in_progress">ВО ТЕК НА ГРАДБА</option></select></label>
               {publishForm.construction === "built" && <label className="field-block"><span>Година на градба</span><input required min="1800" max="2030" type="number" placeholder="на пр. 2018" value={publishForm.year} onChange={(event) => setPublishForm((current) => ({ ...current, year: event.target.value }))} /></label>}
-              <p className="form-helper">Во продукција оваа форма ќе има верификација на адреса, сопственик и документи. Сега создава локален оглас што чека админ-проверка.</p>
-              <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => setPublishOpen(false)}>Откажи</button><button className="button button--primary" type="submit">Испрати на проверка <Icon name="arrow" size={18} /></button></div>
+              <p className="form-helper">Огласот се зачувува како „чека проверка“. За агенција или инвеститор е потребна претходно одобрена организација.</p>
+              <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => setPublishOpen(false)} disabled={publishing}>Откажи</button><button className="button button--primary" type="submit" disabled={publishing}>{publishing ? "Се испраќа…" : "Испрати на проверка"} <Icon name="arrow" size={18} /></button></div>
             </form>
           </section>
         </div>
@@ -670,23 +1109,64 @@ export default function HomeClient() {
       {accountOpen && (
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccountOpen(false); }}>
           <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title">
-            <header className="compact-dialog__header"><div><p>МОЈА DOMA · ДЕМО ПРОФИЛ</p><h2 id="account-title">{accountCreated ? "Вашиот работен преглед" : "Креирајте профил за да продолжите."}</h2></div><button className="dialog-close" type="button" aria-label="Затвори профил" onClick={() => setAccountOpen(false)}><Icon name="close" size={19} /></button></header>
-            {!accountCreated ? <form className="account-create" onSubmit={(event) => { event.preventDefault(); setAccountCreated(true); }}><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Профилот во оваа верзија е локален демо-профил. По креирање ќе видите статистика, свои огласи и понуди.</p><label className="field-block"><span>Име</span><input required placeholder="Вашето име" /></label><label className="field-block"><span>Е-пошта</span><input required type="email" placeholder="ime@email.com" /></label><button className="button button--primary" type="submit">Креирај демо профил <Icon name="arrow" size={18} /></button></form> : <div className="account-workspace"><nav className="workspace-tabs" aria-label="Делови од профилот"><button className={accountTab === "overview" ? "is-active" : ""} type="button" onClick={() => setAccountTab("overview")}>Преглед</button><button className={accountTab === "listings" ? "is-active" : ""} type="button" onClick={() => setAccountTab("listings")}>Мои огласи</button><button className={accountTab === "offers" ? "is-active" : ""} type="button" onClick={() => setAccountTab("offers")}>Понуди</button><button className={accountTab === "saved" ? "is-active" : ""} type="button" onClick={() => setAccountTab("saved")}>Омилени</button></nav>
-              {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Прегледи</span><strong>1.284</strong><small>последни 30 дена · демо</small></article><article><span>Нови понуди</span><strong>6</strong><small>2 чекаат одговор</small></article><article><span>Зачувани</span><strong>{favorites.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Интерес за вашиот оглас</span><strong>Прегледи → пораки → понуди</strong></div><div className="bar-chart" aria-label="Демо графикон на интерес"><i /><i /><i /><i /><i /><i /><i /></div></div></div>}
-              {accountTab === "listings" && <div className="workspace-list"><strong>Огласи од овој уред</strong>{listingInventory.filter((listing) => listing.publisherName === "Мој демо профил").length ? listingInventory.filter((listing) => listing.publisherName === "Мој демо профил").map((listing) => <p key={listing.id}>{listing.title}<span>{statusLabel(listing.status)}</span></p>) : <p>Сè уште немате објавен локален демо оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
-              {accountTab === "offers" && <div className="workspace-list"><strong>Нови понуди и пораки</strong><p><span>Ана П.</span> Барам термин за разгледување во сабота <small>денес</small></p><p><span>Марко Д.</span> Дали е слободно гаражното место? <small>вчера</small></p><p><span>Ирина С.</span> Испратена е примерна понуда за цена <small>пред 2 дена</small></p></div>}
-              {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong><p>{favorites.length ? favorites.length + " огласи се зачувани локално во оваа демо-сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p></div>}
-            </div>}
+            <header className="compact-dialog__header">
+              <div>
+                <p>МОЈА DOMA</p>
+                <h2 id="account-title">{accountLoading ? "Го вчитуваме вашиот профил." : accountCreated ? "Вашиот работен преглед" : "Најавете се за да продолжите."}</h2>
+                {accountCreated && accountProfile && <span>{accountProfile.displayName ?? accountProfile.fullName ?? "Ваш профил"}</span>}
+              </div>
+              <button className="dialog-close" type="button" aria-label="Затвори профил" onClick={() => setAccountOpen(false)}><Icon name="close" size={19} /></button>
+            </header>
+            {accountLoading ? (
+              <div className="account-create"><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Ги вчитуваме вашите огласи, понуди и омилени.</p></div>
+            ) : !accountCreated ? (
+              <div className="account-create"><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Вашиот профил безбедно се поврзува со ChatGPT најава. Не внесуваме име или е-пошта во формата.</p><button className="button button--primary" type="button" onClick={() => void loadAccount()}>Продолжи со најава <Icon name="arrow" size={18} /></button></div>
+            ) : (
+              <div className="account-workspace">
+                <nav className="workspace-tabs" aria-label="Делови од профилот">
+                  <button className={accountTab === "overview" ? "is-active" : ""} type="button" onClick={() => setAccountTab("overview")}>Преглед</button>
+                  <button className={accountTab === "listings" ? "is-active" : ""} type="button" onClick={() => setAccountTab("listings")}>Мои огласи</button>
+                  <button className={accountTab === "offers" ? "is-active" : ""} type="button" onClick={() => setAccountTab("offers")}>Понуди</button>
+                  <button className={accountTab === "saved" ? "is-active" : ""} type="button" onClick={() => setAccountTab("saved")}>Омилени</button>
+                </nav>
+                {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Мои огласи</span><strong>{dashboard?.listings.total ?? ownedListings.length}</strong><small>во вашиот профил</small></article><article><span>Нови понуди</span><strong>{dashboard?.offers.incoming ?? accountOffers.filter((offer) => offer.direction === "incoming").length}</strong><small>примени понуди</small></article><article><span>Зачувани</span><strong>{dashboard?.favorites ?? serverFavoriteIds.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Активност на профилот</span><strong>Огласи → пораки → понуди</strong></div><div className="bar-chart" aria-label="Илустративен графикон за активност"><i /><i /><i /><i /><i /><i /><i /></div></div></div>}
+                {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)}</span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
+                {accountTab === "offers" && <div className="workspace-list"><strong>Понуди и пораки</strong>{accountOffers.length ? accountOffers.map((offer) => <p key={offer.id}><span>{offer.direction === "incoming" ? "Примена" : "Испратена"} {offer.kind === "offer" ? "понуда" : "порака"}</span> {offer.message}<small>{offer.listingTitle}{offer.amountCents ? " · " + formatEuro(offer.amountCents / 100) : ""}</small></p>) : <p>Сè уште нема понуди или пораки.</p>}</div>}
+                {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong>{favoriteListings.length ? favoriteListings.map((listing) => <p key={listing.id}>{listing.title}<span>{listing.city}</span></p>) : <p>{fixtureFavoriteIds.length ? fixtureFavoriteIds.length + " демо огласи се зачувани само во оваа сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p>}</div>}
+              </div>
+            )}
           </section>
         </div>
       )}
 
       {adminOpen && (
-        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdminOpen(false); }}>
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAdmin(); }}>
           <section className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-title">
-            <header className="compact-dialog__header"><div><p>АДМИН · ЛОКАЛЕН ДЕМО ПРЕГЛЕД</p><h2 id="admin-title">Модерација на огласи</h2><span className="admin-disclaimer">Овие контроли важат само во тековната сесија. Вистинскиот админ бара заштитена најава и база.</span></div><button className="dialog-close" type="button" aria-label="Затвори админ" onClick={() => setAdminOpen(false)}><Icon name="close" size={19} /></button></header>
-            <div className="admin-filter-bar" role="group" aria-label="Статус на огласи">{(["pending", "approved", "rejected", "all"] as const).map((status) => <button key={status} className={adminFilter === status ? "is-active" : ""} type="button" onClick={() => setAdminFilter(status)}>{status === "all" ? "Сите" : statusLabel(status)}</button>)}<button className="admin-settings-button" type="button" onClick={() => setNotice("Поставките за содржина на страница ќе ги заклучиме во последната фаза.")}>Поставки за страница</button></div>
-            <div className="admin-list">{adminListings.map((listing) => <article className="admin-row" key={listing.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + listing.status}>{statusLabel(listing.status)}</span><strong>{listing.title}</strong><small>{formatEuro(listing.priceEur) + " · " + listing.address}</small></div><div className="admin-row__actions">{listing.status !== "approved" && <button type="button" onClick={() => updateListingStatus(listing.id, "approved")}>Одобри</button>}{listing.status !== "pending" && <button type="button" onClick={() => updateListingStatus(listing.id, "pending")}>Побарај измени</button>}{listing.status !== "rejected" && <button type="button" className="admin-row__reject" onClick={() => updateListingStatus(listing.id, "rejected")}>Одбиј</button>}<button type="button" className="admin-row__delete" aria-label="Избриши оглас" onClick={() => deleteListing(listing.id)}><Icon name="trash" size={16} /></button></div></article>)}{!adminListings.length && <p className="admin-empty">Нема огласи со овој статус.</p>}</div>
+            <header className="compact-dialog__header">
+              <div>
+                <p>АДМИН ПАНЕЛ</p>
+                <h2 id="admin-title">Модерација на огласи</h2>
+                <span className="admin-disclaimer">Пристапот и секоја промена се проверуваат на серверот. Неодобрениот оглас не е јавно видлив.</span>
+              </div>
+              <button className="dialog-close" type="button" aria-label="Затвори админ" onClick={closeAdmin}><Icon name="close" size={19} /></button>
+            </header>
+            {adminAccess === "checking" && <div className="admin-state"><strong>Се проверува администраторскиот пристап…</strong></div>}
+            {adminAccess === "denied" && <div className="admin-state"><strong>Немате администраторски пристап.</strong><p>Админ-улогите се доделуваат безбедно надвор од јавната страница. Најавете се со одобрениот профил или контактирајте го сопственикот на платформата.</p></div>}
+            {adminAccess === "error" && <div className="admin-state"><strong>Не успеавме да го провериме пристапот.</strong><p>{adminError || "Обидете се повторно."}</p><button className="button button--primary" type="button" onClick={() => void openAdmin()}>Обиди се повторно</button></div>}
+            {adminAccess === "granted" && <>
+              <div className="admin-filter-bar" role="group" aria-label="Статус на огласи">
+                {(["pending", "approved", "rejected", "archived"] as const).map((status) => <button key={status} className={adminFilter === status ? "is-active" : ""} type="button" disabled={adminLoading || adminMutatingListingId !== null} onClick={() => void loadAdminListings(status)}>{ownerStatusLabel(status)}</button>)}
+              </div>
+              <div className="admin-note">
+                <label><span>Забелешка за следната одлука (по избор)</span><input value={adminNote} maxLength={1000} placeholder="на пр. Потребна е проверка на документите" onChange={(event) => setAdminNote(event.target.value)} /></label>
+                {adminActionMessage && <p className="admin-feedback admin-feedback--success">{adminActionMessage}</p>}
+                {adminError && <p className="admin-feedback">{adminError}</p>}
+              </div>
+              <div className="admin-list">
+                {adminLoading ? <p className="admin-empty">Се вчитуваат огласите…</p> : adminListings.length ? adminListings.map((listing) => <article className="admin-row" key={listing.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + listing.status}>{ownerStatusLabel(listing.status)}</span><strong>{listing.title}</strong><small>{formatEuro(listing.priceAmountCents / 100) + " · " + listing.addressLine}</small></div><div className="admin-row__actions">{listing.status === "pending" && <button type="button" disabled={adminMutatingListingId !== null} onClick={() => void moderateListing(listing.id, "approved")}>{adminMutatingListingId === listing.id ? "Се зачувува…" : "Одобри"}</button>}{listing.status === "pending" && <button type="button" className="admin-row__reject" disabled={adminMutatingListingId !== null} onClick={() => void moderateListing(listing.id, "rejected")}>Одбиј</button>}{listing.status !== "archived" && <button type="button" className="admin-row__delete" disabled={adminMutatingListingId !== null} aria-label="Архивирај оглас" onClick={() => void moderateListing(listing.id, "archived")}><Icon name="trash" size={16} /></button>}</div></article>) : <p className="admin-empty">Нема огласи со овој статус.</p>}
+              </div>
+            </>}
+            {adminAccess === "checking" && adminError && <p className="admin-feedback">{adminError}</p>}
           </section>
         </div>
       )}
@@ -695,7 +1175,7 @@ export default function HomeClient() {
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailListingId(null); }}>
           <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
             <div className="detail-dialog__image"><Image src="/images/doma-hero.png" alt="" fill sizes="(max-width: 720px) 100vw, 700px" style={{ objectFit: "cover", objectPosition: selectedDetail.photoPosition }} /><div /><button className="dialog-close detail-dialog__close" type="button" aria-label="Затвори детали" onClick={() => setDetailListingId(null)}><Icon name="close" size={19} /></button><span>{selectedDetail.badge ?? "ДЕМО ОГЛАС"}</span></div>
-            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2><p className="detail-address"><Icon name="pin" size={17} />Демо точна адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><button className="button button--primary" type="button" onClick={() => { toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favorites.includes(selectedDetail.id)} /></button></div></div>
+            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2><p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div>
           </section>
         </div>
       )}

@@ -17,8 +17,14 @@
 /.next/
 /out/
 
-# production
-/build
+# Maintained Vite plugin and Worker sources.
+!/build/
+/build/*
+!/build/connector-preview-plugin.mjs
+!/build/connector-preview-worker.mjs
+!/build/sites-vite-plugin.LICENSE
+!/build/sites-vite-plugin.ts
+!/build/sites-worker.ts
 
 # misc
 .DS_Store
@@ -39,3 +45,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/dist/
+/.wrangler/
+/.sites-runtime/
+/.agents/
+/.codex/
+/outputs/
+/work/

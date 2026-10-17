@@ -1,0 +1,1 @@
+DROP INDEX `profiles_email_unique`;
