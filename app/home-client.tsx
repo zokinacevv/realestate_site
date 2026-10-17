@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
@@ -24,6 +25,8 @@ import {
   type PropertyType,
   type PublisherType,
 } from "./market-data";
+
+const LocationPicker = dynamic(() => import("./location-picker"), { ssr: false });
 
 type IconName =
   | "arrow"
@@ -94,6 +97,7 @@ type PublishForm = {
   latitude: string;
   longitude: string;
   photoUrls: string;
+  exactLocationPublic: boolean;
 };
 
 type OfferForm = {
@@ -101,6 +105,8 @@ type OfferForm = {
   amount: string;
   message: string;
 };
+
+type AddressSuggestion = { label: string; latitude: number; longitude: number };
 
 type ApiListing = {
   id: string;
@@ -266,6 +272,7 @@ function createEmptyPublishForm(): PublishForm {
     latitude: "",
     longitude: "",
     photoUrls: "",
+    exactLocationPublic: false,
   };
 }
 
@@ -328,6 +335,8 @@ function toUiListing(listing: ApiListing): Listing {
     status: "approved",
     photoPosition: "50% center",
     map: coordinatesToMapPoint(listing.latitudeE6 ?? listing.mapLatitudeE6, listing.longitudeE6 ?? listing.mapLongitudeE6),
+    latitude: listing.latitudeE6 == null ? undefined : listing.latitudeE6 / 1_000_000,
+    longitude: listing.longitudeE6 == null ? undefined : listing.longitudeE6 / 1_000_000,
     features: listing.features,
     photoUrls: listing.photoUrls,
     badge: listing.constructionState === "in_progress" ? "ВО ТЕК НА ГРАДБА" : "ОДОБРЕН ОГЛАС",
@@ -506,6 +515,9 @@ export default function HomeClient() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishForm, setPublishForm] = useState<PublishForm>(createEmptyPublishForm);
   const [editingListingId, setEditingListingId] = useState<string | null>(null);
+  const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerForm, setOfferForm] = useState<OfferForm>(createEmptyOfferForm);
@@ -566,6 +578,28 @@ export default function HomeClient() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const query = publishForm.address.trim();
+    if (!publishOpen || query.length < 3) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setAddressSearching(true);
+      try {
+        const response = await fetch("/api/geocode?q=" + encodeURIComponent(query), { signal: controller.signal });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { results?: AddressSuggestion[] };
+        setAddressSuggestions(Array.isArray(payload.results) ? payload.results : []);
+      } catch {
+        if (!controller.signal.aborted) setAddressSuggestions([]);
+      } finally {
+        if (!controller.signal.aborted) setAddressSearching(false);
+      }
+    }, 450);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [publishOpen, publishForm.address]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1116,7 +1150,7 @@ export default function HomeClient() {
           municipality: publishForm.municipality || null,
           neighborhood: publishForm.neighborhood || null,
           addressLine: publishForm.address.trim(),
-          exactLocationPublic: false,
+          exactLocationPublic: publishForm.exactLocationPublic,
           latitudeE6: latitude == null ? null : Math.round(latitude * 1_000_000),
           longitudeE6: longitude == null ? null : Math.round(longitude * 1_000_000),
           areaM2,
@@ -1161,6 +1195,7 @@ export default function HomeClient() {
       latitude: listing.latitudeE6 == null ? "" : String(listing.latitudeE6 / 1_000_000),
       longitude: listing.longitudeE6 == null ? "" : String(listing.longitudeE6 / 1_000_000),
       photoUrls: (listing.photoUrls ?? []).join("\n"),
+      exactLocationPublic: listing.exactLocationPublic,
     });
     setAccountOpen(false);
     setPublishOpen(true);
@@ -1333,17 +1368,27 @@ export default function HomeClient() {
               <label className="field-block"><span>Кој објавува</span><select value={publishForm.publisherType} onChange={(event) => setPublishForm((current) => ({ ...current, publisherType: event.target.value as PublisherType }))}><option value="owner">Приватен сопственик</option><option value="agency">Агенција</option><option value="developer">Инвеститор / фирма</option></select></label>
               <label className="field-block"><span>Точна цена во €</span><input required min="1" type="number" inputMode="decimal" placeholder="на пр. 142000" value={publishForm.price} onChange={(event) => setPublishForm((current) => ({ ...current, price: event.target.value }))} /></label>
               <label className="field-block"><span>Квадратура во m²</span><input required min="1" step="1" type="number" inputMode="numeric" placeholder="на пр. 74" value={publishForm.areaM2} onChange={(event) => setPublishForm((current) => ({ ...current, areaM2: event.target.value }))} /></label>
-              <label className="field-block field-block--wide"><span>Точна адреса</span><input required placeholder="улица, број, општина, град" value={publishForm.address} onChange={(event) => setPublishForm((current) => ({ ...current, address: event.target.value }))} /></label>
+              <label className="field-block field-block--wide"><span>Точна адреса</span><input required autoComplete="street-address" placeholder="почнете да пишувате улица и број" value={publishForm.address} onChange={(event) => { setPublishForm((current) => ({ ...current, address: event.target.value })); setAddressSuggestions([]); setAddressSearching(false); }} />{addressSearching && <small className="address-searching">Се бара адреса…</small>}{publishForm.address.trim().length >= 3 && addressSuggestions.length > 0 && <div className="address-suggestions" role="listbox" aria-label="Предлози за адреса">{addressSuggestions.map((suggestion) => <button type="button" role="option" aria-selected="false" key={suggestion.label + suggestion.latitude} onClick={() => { setPublishForm((current) => ({ ...current, address: suggestion.label, latitude: String(suggestion.latitude), longitude: String(suggestion.longitude) })); setAddressSuggestions([]); }}>{suggestion.label}</button>)}</div>}</label>
               <label className="field-block"><span>Општина</span><select value={publishForm.municipality} onChange={(event) => setPublishForm((current) => ({ ...current, municipality: event.target.value, neighborhood: "" }))}>{skopjeMunicipalities.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
               <label className="field-block"><span>Населба</span><select value={publishForm.neighborhood} onChange={(event) => setPublishForm((current) => ({ ...current, neighborhood: event.target.value }))}>{(skopjeMunicipalities.find((item) => item.name === publishForm.municipality)?.neighborhoods ?? []).map((item) => <option key={item}>{item}</option>)}</select></label>
               <label className="field-block"><span>Состојба</span><select value={publishForm.construction} onChange={(event) => setPublishForm((current) => ({ ...current, construction: event.target.value as ConstructionState }))}><option value="built">Изградено</option><option value="in_progress">ВО ТЕК НА ГРАДБА</option></select></label>
               {publishForm.construction === "built" && <label className="field-block"><span>Година на градба</span><input required min="1800" max="2030" type="number" placeholder="на пр. 2018" value={publishForm.year} onChange={(event) => setPublishForm((current) => ({ ...current, year: event.target.value }))} /></label>}
-              <label className="field-block"><span>Географска ширина (по избор)</span><input inputMode="decimal" placeholder="на пр. 41.9981" value={publishForm.latitude} onChange={(event) => setPublishForm((current) => ({ ...current, latitude: event.target.value }))} /></label>
-              <label className="field-block"><span>Географска должина (по избор)</span><input inputMode="decimal" placeholder="на пр. 21.4254" value={publishForm.longitude} onChange={(event) => setPublishForm((current) => ({ ...current, longitude: event.target.value }))} /></label>
+              <label className="field-block"><span>Географска ширина</span><input readOnly inputMode="decimal" placeholder="изберете адреса или pin" value={publishForm.latitude} /></label>
+              <label className="field-block"><span>Географска должина</span><input readOnly inputMode="decimal" placeholder="изберете адреса или pin" value={publishForm.longitude} /></label>
+              <div className="field-block field-block--wide location-controls"><button className="button button--outline" type="button" onClick={() => setLocationPickerOpen(true)}><Icon name="pin" size={17} /> Постави точен pin на мапа</button><label className="exact-location-toggle"><input type="checkbox" checked={publishForm.exactLocationPublic} onChange={(event) => setPublishForm((current) => ({ ...current, exactLocationPublic: event.target.checked }))} /> <span>Прикажи ја точната локација јавно на мапата</span></label><small>Ако не е избрано, корисниците гледаат само приближна зона, а точниот pin останува за модерација и вашиот профил.</small></div>
               <label className="field-block field-block--wide"><span>Линкови до фотографии (по еден HTTPS линк во ред, до 6)</span><textarea rows={4} placeholder="https://…/stan-1.jpg" value={publishForm.photoUrls} onChange={(event) => setPublishForm((current) => ({ ...current, photoUrls: event.target.value }))} /></label>
               <p className="form-helper">Фотографиите се прикажуваат во галеријата на огласот. Огласот се зачувува како „чека проверка“. За агенција или инвеститор е потребна претходно одобрена организација.</p>
               <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => { setPublishOpen(false); setEditingListingId(null); }} disabled={publishing}>Откажи</button><button className="button button--primary" type="submit" disabled={publishing}>{publishing ? "Се испраќа…" : editingListingId ? "Испрати измени" : "Испрати на проверка"} <Icon name="arrow" size={18} /></button></div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {locationPickerOpen && (
+        <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setLocationPickerOpen(false); }}>
+          <section className="compact-dialog location-dialog" role="dialog" aria-modal="true" aria-labelledby="location-picker-title">
+            <header className="compact-dialog__header"><div><p>ТОЧНА ЛОКАЦИЈА</p><h2 id="location-picker-title">Поставете pin на улицата</h2></div><button className="dialog-close" type="button" aria-label="Затвори мапа" onClick={() => setLocationPickerOpen(false)}><Icon name="close" size={19} /></button></header>
+            <div className="location-dialog__body"><p>Кликнете точно каде што се наоѓа имотот. Може прво да изберете адреса од предлозите, па да го поместите pin-от.</p><LocationPicker key={publishForm.latitude + ":" + publishForm.longitude} value={publishForm.latitude && publishForm.longitude ? { latitude: Number(publishForm.latitude), longitude: Number(publishForm.longitude) } : null} onChange={(location) => setPublishForm((current) => ({ ...current, latitude: location.latitude.toFixed(6), longitude: location.longitude.toFixed(6) }))} /><div className="compact-dialog__actions"><button className="button button--primary" type="button" onClick={() => setLocationPickerOpen(false)}>Зачувај локација <Icon name="check" size={18} /></button></div></div>
           </section>
         </div>
       )}
@@ -1436,7 +1481,7 @@ export default function HomeClient() {
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailListingId(null); }}>
           <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
             <div className="detail-dialog__image"><Image src="/images/doma-hero.png" alt="" fill sizes="(max-width: 720px) 100vw, 700px" style={{ objectFit: "cover", objectPosition: selectedDetail.photoPosition }} /><div /><button className="dialog-close detail-dialog__close" type="button" aria-label="Затвори детали" onClick={() => setDetailListingId(null)}><Icon name="close" size={19} /></button><span>{selectedDetail.badge ?? "ДЕМО ОГЛАС"}</span></div>
-            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2>{selectedDetail.photoUrls?.length ? <div className="listing-gallery" aria-label="Фотографии од огласот">{selectedDetail.photoUrls.map((url, index) => <img /* eslint-disable-line @next/next/no-img-element -- user-provided HTTPS galleries are rendered without server image proxying */ src={url} alt={selectedDetail.title + " – фотографија " + (index + 1)} key={url} loading="lazy" />)}</div> : null}<p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><div className="detail-dialog__actions">{offerListing ? <button className="button button--outline" type="button" onClick={openOfferForm}>Прати порака / понуда</button> : <small>За демо огласите не се испраќаат пораки или понуди.</small>}<button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div></div>
+            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2>{selectedDetail.photoUrls?.length ? <div className="listing-gallery" aria-label="Фотографии од огласот">{selectedDetail.photoUrls.map((url, index) => <img /* eslint-disable-line @next/next/no-img-element -- user-provided HTTPS galleries are rendered without server image proxying */ src={url} alt={selectedDetail.title + " – фотографија " + (index + 1)} key={url} loading="lazy" />)}</div> : null}<p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p>{selectedDetail.latitude != null && selectedDetail.longitude != null ? <div className="listing-location-map"><strong>Точна локација</strong><LocationPicker value={{ latitude: selectedDetail.latitude, longitude: selectedDetail.longitude }} readOnly height={220} /></div> : <p className="location-private">Точната локација не е јавно објавена од огласувачот.</p>}<div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><div className="detail-dialog__actions">{offerListing ? <button className="button button--outline" type="button" onClick={openOfferForm}>Прати порака / понуда</button> : <small>За демо огласите не се испраќаат пораки или понуди.</small>}<button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div></div>
           </section>
         </div>
       )}

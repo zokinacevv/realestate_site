@@ -41,6 +41,8 @@ export type Listing = {
   photoPosition: string;
   photoUrls?: string[];
   map: { x: number; y: number };
+  latitude?: number;
+  longitude?: number;
   features: string[];
   badge?: string;
 };
