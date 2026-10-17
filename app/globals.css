@@ -1856,7 +1856,7 @@ select:focus-visible {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -1887,6 +1887,8 @@ select:focus-visible {
 .analytics-card > div:first-child { display: grid; gap: 5px; }
 .analytics-card span { color: rgba(255,255,255,.66); font-size: 10px; font-weight: 800; }
 .analytics-card strong { font-size: 15px; letter-spacing: -0.015em; }
+.analytics-card small { color: rgba(255,255,255,.64); font-size: 10px; line-height: 1.4; }
+.analytics-card__empty { margin: 0; color: rgba(255,255,255,.68); font-size: 11px; line-height: 1.45; text-align: right; }
 
 .bar-chart {
   display: flex;
@@ -1909,6 +1911,33 @@ select:focus-visible {
 .bar-chart i:nth-child(5) { height: 55%; }
 .bar-chart i:nth-child(6) { height: 88%; }
 .bar-chart i:nth-child(7) { height: 67%; }
+
+.bar-chart--live i { min-height: 11px; transition: height .2s ease; }
+
+.activity-list {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #e0e5e0;
+  border-radius: 10px;
+  background: #fafbf9;
+}
+
+.activity-list p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #e4e8e4;
+  color: #61726b;
+  font-size: 11px;
+}
+
+.activity-list p:first-child { border-top: 0; }
+.activity-list p > span { overflow: hidden; color: var(--ink); font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.activity-list p > strong { flex: 0 0 auto; color: #3f6958; font-size: 10px; }
 
 .workspace-list {
   display: grid;
@@ -2229,6 +2258,8 @@ select:focus-visible {
   .account-workspace { padding: 0 16px 20px; }
   .metric-grid { grid-template-columns: 1fr; }
   .analytics-card { align-items: flex-start; flex-direction: column; }
+  .analytics-card__empty { text-align: left; }
+  .activity-list p { align-items: flex-start; flex-direction: column; gap: 3px; }
   .admin-filter-bar { padding: 11px 16px; }
   .admin-state { padding: 23px 16px 28px; }
   .admin-note { padding: 12px 16px; }

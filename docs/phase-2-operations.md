@@ -7,6 +7,7 @@
 - Only approved listings are returned by the public API.
 - Favorites, offers and account dashboard counts are scoped to the signed-in user.
 - Moderation is recorded in an immutable listing-moderation history.
+- Property statistics use aggregate unique daily views. The browser receives a random HTTP-only identifier; the database stores only its one-way digest together with the listing and date, never a raw IP address.
 
 ## Admin bootstrap
 

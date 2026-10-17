@@ -156,6 +156,21 @@ type DashboardData = {
   listings: { total: number; pending: number; approved: number; rejected: number; archived: number };
   favorites: number;
   offers: { incoming: number; outgoing: number };
+  views: { total: number; last30Days: number };
+  activity: { listingId: string; title: string; views: number; incomingOffers: number }[];
+};
+
+type MarketAverage = {
+  municipality: string | null;
+  neighborhood?: string | null;
+  sampleCount: number;
+  averagePriceCents: number;
+  averagePricePerM2Cents: number;
+};
+
+type MarketAveragesPayload = {
+  byMunicipality?: MarketAverage[];
+  byNeighborhood?: MarketAverage[];
 };
 
 type AccountOffer = {
@@ -436,6 +451,8 @@ export default function HomeClient() {
   const [mapFilter, setMapFilter] = useState<MapFilter>(createEmptyMapFilter);
   const [appliedSearch, setAppliedSearch] = useState<SearchSnapshot | null>(null);
   const [listingInventory, setListingInventory] = useState<Listing[]>(initialListings);
+  const [marketAverages, setMarketAverages] = useState<MarketAveragesPayload | null>(null);
+  const [marketAveragesLoading, setMarketAveragesLoading] = useState(false);
   const [fixtureFavoriteIds, setFixtureFavoriteIds] = useState<string[]>([]);
   const [serverFavoriteIds, setServerFavoriteIds] = useState<string[]>([]);
   const [persistedListingIds, setPersistedListingIds] = useState<string[]>([]);
@@ -507,6 +524,34 @@ export default function HomeClient() {
     };
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+
+    async function loadMarketAverages() {
+      setMarketAveragesLoading(true);
+      try {
+        const query = new URLSearchParams({ city: selectedCity, intent: mode });
+        const response = await fetch("/api/market/averages?" + query.toString(), {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("MARKET_AVERAGES_UNAVAILABLE");
+        const payload = (await response.json()) as MarketAveragesPayload;
+        if (active) setMarketAverages(payload);
+      } catch {
+        if (active) setMarketAverages(null);
+      } finally {
+        if (active) setMarketAveragesLoading(false);
+      }
+    }
+
+    void loadMarketAverages();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [selectedCity, mode]);
+
   const searchLabel = mode === "sale" ? "Купување" : "Изнајмување";
   const selectedMunicipality = skopjeMunicipalities.find((item) => item.name === advanced.municipality);
   const visibleNeighborhoods = selectedMunicipality?.neighborhoods ?? [];
@@ -526,13 +571,14 @@ export default function HomeClient() {
   }, [listingInventory, appliedSearch]);
   const marketAverage = useMemo(() => {
     if (!advanced.municipality) return null;
-    const scopedListings = listingInventory.filter((listing) => {
-      const neighborhoodMatches = !advanced.neighborhood || listing.neighborhood === advanced.neighborhood;
-      return listing.status === "approved" && listing.city === selectedCity && listing.intent === mode && listing.municipality === advanced.municipality && neighborhoodMatches && listing.areaM2 > 0;
-    });
-    if (scopedListings.length === 0) return { count: 0, value: 0 };
-    return { count: scopedListings.length, value: Math.round(scopedListings.reduce((sum, listing) => sum + pricePerSquareMeter(listing), 0) / scopedListings.length) };
-  }, [listingInventory, selectedCity, mode, advanced.municipality, advanced.neighborhood]);
+    const rows = advanced.neighborhood
+      ? marketAverages?.byNeighborhood
+      : marketAverages?.byMunicipality;
+    return rows?.find((row) =>
+      row.municipality === advanced.municipality &&
+      (!advanced.neighborhood || row.neighborhood === advanced.neighborhood),
+    ) ?? null;
+  }, [marketAverages, advanced.municipality, advanced.neighborhood]);
   const mapBaseSearch = useMemo<SearchSnapshot>(
     () => ({ ...draftSearch, map: createEmptyMapFilter() }),
     [draftSearch],
@@ -790,6 +836,12 @@ export default function HomeClient() {
       if (requestId === adminRequestIdRef.current) setAdminMutatingListingId(null);
     }
   }
+  function openListingDetails(id: string) {
+    setDetailListingId(id);
+    if (persistedListingIds.includes(id)) {
+      void fetch("/api/listings/" + encodeURIComponent(id) + "/view", { method: "POST" });
+    }
+  }
   async function toggleFavorite(id: string) {
     if (!persistedListingIds.includes(id)) {
       setFixtureFavoriteIds((current) => current.includes(id) ? current.filter((favoriteId) => favoriteId !== id) : [...current, id]);
@@ -1003,7 +1055,7 @@ export default function HomeClient() {
               <button className="button button--outline" type="button" onClick={() => setAdvancedOpen(true)}><Icon name="filter" size={18} /> Промени филтри</button>
             </div>
             {appliedSearch && <div className="result-toolbar"><span><strong>{filteredListings.length}</strong> огласи</span><button type="button" onClick={() => { setAppliedSearch(null); resetAdvancedFilters(); }}>Исчисти пребарување</button></div>}
-            <div className="listing-grid">{filteredListings.length > 0 ? filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} favorite={favoriteIds.includes(listing.id)} onFavorite={() => void toggleFavorite(listing.id)} onOpen={() => setDetailListingId(listing.id)} />) : <div className="listing-empty">Нема одобрени огласи со оваа комбинација. Пробајте друга општина, тип или исчистете ја нацртаната зона на мапата.</div>}</div>
+            <div className="listing-grid">{filteredListings.length > 0 ? filteredListings.map((listing) => <ListingCard key={listing.id} listing={listing} favorite={favoriteIds.includes(listing.id)} onFavorite={() => void toggleFavorite(listing.id)} onOpen={() => openListingDetails(listing.id)} />) : <div className="listing-empty">Нема одобрени огласи со оваа комбинација. Пробајте друга општина, тип или исчистете ја нацртаната зона на мапата.</div>}</div>
             <p className="demo-note">Примерните демо огласи остануваат за проверка на искуството; новите одобрени огласи се вчитуваат од базата.</p>
           </div>
         </section>
@@ -1060,7 +1112,7 @@ export default function HomeClient() {
                     <label className="field-block"><span>Греење</span><select value={advanced.heating} onChange={(event) => updateAdvanced("heating", event.target.value)}><option value="all">Сите видови</option><option>Централно</option><option>Подно греење</option><option>Гасно греење</option><option>Електрично</option><option>Печка на пелети</option><option>Топлотна пумпа</option></select></label>
                     <label className="field-block"><span>Ладење</span><select value={advanced.cooling} onChange={(event) => updateAdvanced("cooling", event.target.value)}><option value="all">Сите видови</option><option>Инвертер клима</option><option>Мулти-сплит систем</option><option>Топлотна пумпа</option></select></label>
                   </div>
-                  {advanced.municipality && <aside className="market-insight" aria-live="polite"><span className="market-insight__label">{advanced.neighborhood ? "Населба " + advanced.neighborhood : "Општина " + advanced.municipality}</span>{marketAverage && marketAverage.count > 0 ? <strong>Демо просек: {formatEuro(marketAverage.value).replace(" €", "")} €/m²{mode === "rent" ? " месечно" : ""}</strong> : <strong>Нема доволно демо податоци за овој избор.</strong>}<small>{marketAverage?.count ?? 0} одобрени примерни огласи · {searchLabel.toLowerCase()}</small></aside>}
+                  {advanced.municipality && <aside className="market-insight" aria-live="polite"><span className="market-insight__label">{advanced.neighborhood ? "Населба " + advanced.neighborhood : "Општина " + advanced.municipality}</span>{marketAveragesLoading ? <strong>Се пресметува просекот од одобрени огласи…</strong> : marketAverage && marketAverage.sampleCount > 0 ? <strong>Просек: {formatEuro(marketAverage.averagePricePerM2Cents / 100).replace(" €", "")} €/m²{mode === "rent" ? " месечно" : ""}</strong> : <strong>Сè уште нема одобрени огласи во базата за овој избор.</strong>}<small>{marketAverage?.sampleCount ?? 0} одобрени огласи во базата · {searchLabel.toLowerCase()}</small></aside>}
                 </section>
                 <aside className="map-teaser"><span className="map-teaser__icon"><Icon name="map" size={21} /></span><p className="eyebrow">ПРЕБАРУВАЊЕ НА МАПА</p><h3>Нацртајте област или поставете радиус.</h3><p>Изберете дел од градот со слободно повлекување линија или со круг околу точка.</p><ul><li>{mapFilter.tool === "radius" && mapFilter.center ? "Радиус е поставен" : mapFilter.tool === "polygon" && mapFilter.polygon.length >= 3 ? "Област е нацртана" : "Нема избрана зона"}</li><li>{previewListings.length + " демо огласи во тековниот избор"}</li></ul><button className="button button--primary" type="button" onClick={() => setMapOpen(true)}><Icon name="map" size={18} /> Отвори мапа</button><small>Мапата во демото е подготвена за Скопје.</small></aside>
               </div>
@@ -1129,7 +1181,7 @@ export default function HomeClient() {
                   <button className={accountTab === "offers" ? "is-active" : ""} type="button" onClick={() => setAccountTab("offers")}>Понуди</button>
                   <button className={accountTab === "saved" ? "is-active" : ""} type="button" onClick={() => setAccountTab("saved")}>Омилени</button>
                 </nav>
-                {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Мои огласи</span><strong>{dashboard?.listings.total ?? ownedListings.length}</strong><small>во вашиот профил</small></article><article><span>Нови понуди</span><strong>{dashboard?.offers.incoming ?? accountOffers.filter((offer) => offer.direction === "incoming").length}</strong><small>примени понуди</small></article><article><span>Зачувани</span><strong>{dashboard?.favorites ?? serverFavoriteIds.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Активност на профилот</span><strong>Огласи → пораки → понуди</strong></div><div className="bar-chart" aria-label="Илустративен графикон за активност"><i /><i /><i /><i /><i /><i /><i /></div></div></div>}
+                {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Мои огласи</span><strong>{dashboard?.listings.total ?? ownedListings.length}</strong><small>во вашиот профил</small></article><article><span>Прегледи</span><strong>{dashboard?.views.total ?? 0}</strong><small>единствени дневни посети</small></article><article><span>Нови понуди</span><strong>{dashboard?.offers.incoming ?? accountOffers.filter((offer) => offer.direction === "incoming").length}</strong><small>примени понуди</small></article><article><span>Зачувани</span><strong>{dashboard?.favorites ?? serverFavoriteIds.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Активност во последни 30 дена</span><strong>{dashboard?.views.last30Days ?? 0} единствени прегледи</strong><small>Се бројат само одобрени огласи и најмногу една посета по оглас дневно.</small></div>{dashboard?.activity.length ? <div className="bar-chart bar-chart--live" aria-label="Прегледи на најгледаните ваши огласи">{dashboard.activity.map((item) => <i key={item.listingId} title={item.title + ": " + item.views + " прегледи"} style={{ height: Math.max(18, Math.round((item.views / Math.max(...dashboard.activity.map((row) => row.views), 1)) * 100)) + "%" }} />)}</div> : <p className="analytics-card__empty">Кога ќе има прегледи на ваши огласи, ќе се појават тука.</p>}</div>{dashboard?.activity.length ? <div className="activity-list">{dashboard.activity.slice(0, 3).map((item) => <p key={item.listingId}><span>{item.title}</span><strong>{item.views} прегледи · {item.incomingOffers} понуди</strong></p>)}</div> : null}</div>}
                 {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)}</span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
                 {accountTab === "offers" && <div className="workspace-list"><strong>Понуди и пораки</strong>{accountOffers.length ? accountOffers.map((offer) => <p key={offer.id}><span>{offer.direction === "incoming" ? "Примена" : "Испратена"} {offer.kind === "offer" ? "понуда" : "порака"}</span> {offer.message}<small>{offer.listingTitle}{offer.amountCents ? " · " + formatEuro(offer.amountCents / 100) : ""}</small></p>) : <p>Сè уште нема понуди или пораки.</p>}</div>}
                 {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong>{favoriteListings.length ? favoriteListings.map((listing) => <p key={listing.id}>{listing.title}<span>{listing.city}</span></p>) : <p>{fixtureFavoriteIds.length ? fixtureFavoriteIds.length + " демо огласи се зачувани само во оваа сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p>}</div>}
