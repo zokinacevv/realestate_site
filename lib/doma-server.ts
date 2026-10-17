@@ -237,6 +237,10 @@ export function toPublicListing(row: ListingRow) {
     locationPrecision: row.locationPrecision,
     latitudeE6: shareExactLocation ? row.latitudeE6 : null,
     longitudeE6: shareExactLocation ? row.longitudeE6 : null,
+    // The map receives only an approximately 1 km grid point unless the owner
+    // explicitly makes the exact location public.
+    mapLatitudeE6: row.latitudeE6 == null ? null : Math.round(row.latitudeE6 / 10_000) * 10_000,
+    mapLongitudeE6: row.longitudeE6 == null ? null : Math.round(row.longitudeE6 / 10_000) * 10_000,
     areaM2: row.areaM2,
     rooms: row.rooms,
     floorNumber: row.floorNumber,

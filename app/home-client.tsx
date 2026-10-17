@@ -119,6 +119,8 @@ type ApiListing = {
   locationPrecision?: string | null;
   latitudeE6: number | null;
   longitudeE6: number | null;
+  mapLatitudeE6: number | null;
+  mapLongitudeE6: number | null;
   areaM2: number;
   rooms: number | null;
   floorNumber: number | null;
@@ -325,7 +327,7 @@ function toUiListing(listing: ApiListing): Listing {
     views: 0,
     status: "approved",
     photoPosition: "50% center",
-    map: coordinatesToMapPoint(listing.latitudeE6, listing.longitudeE6),
+    map: coordinatesToMapPoint(listing.latitudeE6 ?? listing.mapLatitudeE6, listing.longitudeE6 ?? listing.mapLongitudeE6),
     features: listing.features,
     photoUrls: listing.photoUrls,
     badge: listing.constructionState === "in_progress" ? "ВО ТЕК НА ГРАДБА" : "ОДОБРЕН ОГЛАС",
