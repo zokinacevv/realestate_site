@@ -91,6 +91,9 @@ type PublishForm = {
   neighborhood: string;
   construction: ConstructionState;
   year: string;
+  latitude: string;
+  longitude: string;
+  photoUrls: string;
 };
 
 type OfferForm = {
@@ -128,6 +131,7 @@ type ApiListing = {
   builtYear: number | null;
   completionDate: string | null;
   features: string[];
+  photoUrls?: string[];
   publishedAt?: string | null;
 };
 
@@ -157,6 +161,8 @@ type CurrentUserPayload = {
 
 type AdminStatus = OwnerApiListing["status"];
 type AdminAccess = "checking" | "granted" | "denied" | "error";
+type OrganizationStatus = "pending" | "verified" | "suspended";
+type AdminOrganization = { id: string; kind: "agency" | "developer"; displayName: string; legalName: string | null; status: OrganizationStatus; createdAt: string; updatedAt: string };
 
 type DashboardData = {
   listings: { total: number; pending: number; approved: number; rejected: number; archived: number };
@@ -255,6 +261,9 @@ function createEmptyPublishForm(): PublishForm {
     neighborhood: "Јане Сандански",
     construction: "built",
     year: "",
+    latitude: "",
+    longitude: "",
+    photoUrls: "",
   };
 }
 
@@ -316,9 +325,21 @@ function toUiListing(listing: ApiListing): Listing {
     views: 0,
     status: "approved",
     photoPosition: "50% center",
-    map: { x: 50, y: 45 },
+    map: coordinatesToMapPoint(listing.latitudeE6, listing.longitudeE6),
     features: listing.features,
+    photoUrls: listing.photoUrls,
     badge: listing.constructionState === "in_progress" ? "ВО ТЕК НА ГРАДБА" : "ОДОБРЕН ОГЛАС",
+  };
+}
+
+function coordinatesToMapPoint(latitudeE6: number | null, longitudeE6: number | null): MapPoint {
+  if (latitudeE6 == null || longitudeE6 == null) return { x: 50, y: 45 };
+  const latitude = latitudeE6 / 1_000_000;
+  const longitude = longitudeE6 / 1_000_000;
+  // Skopje map viewport: 42.00–42.08 N and 21.31–21.52 E.
+  return {
+    x: Math.max(2, Math.min(98, ((longitude - 21.31) / 0.21) * 100)),
+    y: Math.max(2, Math.min(68, ((42.08 - latitude) / 0.08) * 70)),
   };
 }
 
@@ -482,6 +503,7 @@ export default function HomeClient() {
   const [accountTab, setAccountTab] = useState<"overview" | "listings" | "offers" | "saved">("overview");
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishForm, setPublishForm] = useState<PublishForm>(createEmptyPublishForm);
+  const [editingListingId, setEditingListingId] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerForm, setOfferForm] = useState<OfferForm>(createEmptyOfferForm);
@@ -496,6 +518,10 @@ export default function HomeClient() {
   const [adminActionMessage, setAdminActionMessage] = useState("");
   const [adminNote, setAdminNote] = useState("");
   const [adminMutatingListingId, setAdminMutatingListingId] = useState<string | null>(null);
+  const [adminSection, setAdminSection] = useState<"listings" | "organizations">("listings");
+  const [organizationFilter, setOrganizationFilter] = useState<OrganizationStatus>("pending");
+  const [adminOrganizations, setAdminOrganizations] = useState<AdminOrganization[]>([]);
+  const [adminMutatingOrganizationId, setAdminMutatingOrganizationId] = useState<string | null>(null);
   const [detailListingId, setDetailListingId] = useState<string | null>(null);
   const [mapFocusId, setMapFocusId] = useState<string | null>(null);
   const [isDrawingMap, setIsDrawingMap] = useState(false);
@@ -768,6 +794,7 @@ export default function HomeClient() {
     setAdminError("");
     setAdminActionMessage("");
     setAdminListings([]);
+    setAdminSection("listings");
     try {
       const response = await fetch("/api/me");
       if (response.status === 401) {
@@ -853,6 +880,29 @@ export default function HomeClient() {
     } finally {
       if (requestId === adminRequestIdRef.current) setAdminMutatingListingId(null);
     }
+  }
+  async function loadAdminOrganizations(status: OrganizationStatus) {
+    setOrganizationFilter(status);
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const response = await fetch("/api/admin/organizations?status=" + encodeURIComponent(status));
+      if (!response.ok) { setAdminError(await errorMessage(response, "Организациите не може да се вчитаат.")); return; }
+      const payload = (await response.json()) as { organizations?: AdminOrganization[] };
+      setAdminOrganizations(Array.isArray(payload.organizations) ? payload.organizations : []);
+    } catch { setAdminError("Организациите не може да се вчитаат. Обидете се повторно."); }
+    finally { setAdminLoading(false); }
+  }
+  async function moderateOrganization(id: string, status: "verified" | "suspended") {
+    setAdminMutatingOrganizationId(id);
+    setAdminError("");
+    try {
+      const response = await fetch("/api/admin/organizations", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId: id, status }) });
+      if (!response.ok) { setAdminError(await errorMessage(response, "Промената не може да се зачува.")); return; }
+      setAdminActionMessage(status === "verified" ? "Организацијата е потврдена." : "Организацијата е суспендирана.");
+      await loadAdminOrganizations(organizationFilter);
+    } catch { setAdminError("Промената не може да се зачува. Обидете се повторно."); }
+    finally { setAdminMutatingOrganizationId(null); }
   }
   function openListingDetails(id: string) {
     setDetailListingId(id);
@@ -1035,11 +1085,22 @@ export default function HomeClient() {
       setNotice("Внесете валидна година на градба.");
       return;
     }
+    const latitude = publishForm.latitude.trim() ? Number(publishForm.latitude) : null;
+    const longitude = publishForm.longitude.trim() ? Number(publishForm.longitude) : null;
+    if ((latitude == null) !== (longitude == null) || (latitude != null && (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180))) {
+      setNotice("Внесете точни координати заедно, или оставете ги двете полиња празни.");
+      return;
+    }
+    const photoUrls = publishForm.photoUrls.split(/\n|,/).map((value) => value.trim()).filter(Boolean);
+    if (photoUrls.length > 6 || photoUrls.some((value) => !/^https:\/\//.test(value))) {
+      setNotice("Внесете до 6 безбедни HTTPS линкови за фотографии.");
+      return;
+    }
 
     setPublishing(true);
     try {
-      const response = await fetch("/api/listings", {
-        method: "POST",
+      const response = await fetch(editingListingId ? "/api/me/listings/" + encodeURIComponent(editingListingId) : "/api/listings", {
+        method: editingListingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: publishForm.title.trim(),
@@ -1054,10 +1115,13 @@ export default function HomeClient() {
           neighborhood: publishForm.neighborhood || null,
           addressLine: publishForm.address.trim(),
           exactLocationPublic: false,
+          latitudeE6: latitude == null ? null : Math.round(latitude * 1_000_000),
+          longitudeE6: longitude == null ? null : Math.round(longitude * 1_000_000),
           areaM2,
           constructionState: publishForm.construction,
           builtYear: publishForm.construction === "built" ? builtYear : null,
           features: [],
+          photoUrls,
         }),
       });
       if (response.status === 401) {
@@ -1075,13 +1139,29 @@ export default function HomeClient() {
         setOwnedListings((current) => [createdListing, ...current.filter((listing) => listing.id !== createdListing.id)]);
       }
       setPublishOpen(false);
+      setEditingListingId(null);
       setPublishForm(createEmptyPublishForm());
-      setNotice("Огласот е зачуван со точна цена, адреса и квадратура и сега чека админ-проверка.");
+      setNotice(editingListingId ? "Измените се зачувани и огласот повторно чека админ-проверка." : "Огласот е зачуван со точна цена, адреса и квадратура и сега чека админ-проверка.");
     } catch {
       setNotice("Огласот не може да се испрати. Обидете се повторно.");
     } finally {
       setPublishing(false);
     }
+  }
+  function openEditListing(listing: OwnerApiListing) {
+    setEditingListingId(listing.id);
+    setPublishForm({
+      title: listing.title, propertyType: listing.propertyType as PropertyType, intent: listing.intent,
+      publisherType: listing.publisherType, price: String(listing.priceAmountCents / 100),
+      areaM2: String(listing.areaM2), address: listing.addressLine,
+      municipality: listing.municipality ?? "", neighborhood: listing.neighborhood ?? "",
+      construction: listing.constructionState, year: listing.builtYear == null ? "" : String(listing.builtYear),
+      latitude: listing.latitudeE6 == null ? "" : String(listing.latitudeE6 / 1_000_000),
+      longitude: listing.longitudeE6 == null ? "" : String(listing.longitudeE6 / 1_000_000),
+      photoUrls: (listing.photoUrls ?? []).join("\n"),
+    });
+    setAccountOpen(false);
+    setPublishOpen(true);
   }
   function filterByPartner(type: PublisherType) {
     setPublisherType(type);
@@ -1195,7 +1275,7 @@ export default function HomeClient() {
         </section>
       </main>
 
-      <footer className="doma-footer"><div className="doma-shell doma-footer__inner"><a className="doma-logo doma-logo--footer" href="#pocetna" aria-label="DOMA, почетна"><span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>DOMA</a><p>Прототип за појасно пребарување недвижности во Македонија.</p><button className="footer-admin-link" type="button" onClick={() => void openAdmin()}>Отвори админ</button><span>© 2026 DOMA</span></div></footer>
+      <footer className="doma-footer"><div className="doma-shell doma-footer__inner"><a className="doma-logo doma-logo--footer" href="#pocetna" aria-label="DOMA, почетна"><span className="doma-logo__mark" aria-hidden="true"><span /><span /><span /></span>DOMA</a><p>Платформа за појасно пребарување недвижности во Македонија.</p><nav className="footer-links" aria-label="Правни информации"><a href="/privacy">Приватност</a><a href="/terms">Услови</a></nav><button className="footer-admin-link" type="button" onClick={() => void openAdmin()}>Отвори админ</button><span>© 2026 DOMA</span></div></footer>
 
       {advancedOpen && (
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdvancedOpen(false); }}>
@@ -1219,7 +1299,7 @@ export default function HomeClient() {
                   </div>
                   {advanced.municipality && <aside className="market-insight" aria-live="polite"><span className="market-insight__label">{advanced.neighborhood ? "Населба " + advanced.neighborhood : "Општина " + advanced.municipality}</span>{marketAveragesLoading ? <strong>Се пресметува просекот од одобрени огласи…</strong> : marketAverage && marketAverage.sampleCount > 0 ? <strong>Просек: {formatEuro(marketAverage.averagePricePerM2Cents / 100).replace(" €", "")} €/m²{mode === "rent" ? " месечно" : ""}</strong> : <strong>Сè уште нема одобрени огласи во базата за овој избор.</strong>}<small>{marketAverage?.sampleCount ?? 0} одобрени огласи во базата · {searchLabel.toLowerCase()}</small></aside>}
                 </section>
-                <aside className="map-teaser"><span className="map-teaser__icon"><Icon name="map" size={21} /></span><p className="eyebrow">ПРЕБАРУВАЊЕ НА МАПА</p><h3>Нацртајте област или поставете радиус.</h3><p>Изберете дел од градот со слободно повлекување линија или со круг околу точка.</p><ul><li>{mapFilter.tool === "radius" && mapFilter.center ? "Радиус е поставен" : mapFilter.tool === "polygon" && mapFilter.polygon.length >= 3 ? "Област е нацртана" : "Нема избрана зона"}</li><li>{previewListings.length + " демо огласи во тековниот избор"}</li></ul><button className="button button--primary" type="button" onClick={() => setMapOpen(true)}><Icon name="map" size={18} /> Отвори мапа</button><small>Мапата во демото е подготвена за Скопје.</small></aside>
+                <aside className="map-teaser"><span className="map-teaser__icon"><Icon name="map" size={21} /></span><p className="eyebrow">ПРЕБАРУВАЊЕ НА МАПА</p><h3>Нацртајте област или поставете радиус.</h3><p>Изберете дел од градот со слободно повлекување линија или со круг околу точка.</p><ul><li>{mapFilter.tool === "radius" && mapFilter.center ? "Радиус е поставен" : mapFilter.tool === "polygon" && mapFilter.polygon.length >= 3 ? "Област е нацртана" : "Нема избрана зона"}</li><li>{previewListings.length + " огласи во тековниот избор"}</li></ul><button className="button button--primary" type="button" onClick={() => setMapOpen(true)}><Icon name="map" size={18} /> Отвори мапа</button><small>Координатите од огласите се прикажуваат во зоната на Скопје.</small></aside>
               </div>
             </div>
             <footer className="workflow-dialog__footer"><button className="dialog-reset" type="button" onClick={resetAdvancedFilters}>Ресетирај детали</button><div><span>{previewListings.length + " огласи подготвени за приказ"}</span><button className="button button--primary" type="button" onClick={applyAdvancedFilters}>Прикажи огласи <Icon name="arrow" size={18} /></button></div></footer>
@@ -1230,10 +1310,10 @@ export default function HomeClient() {
       {mapOpen && (
         <div className="workflow-backdrop map-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMapOpen(false); }}>
           <section className="map-dialog" role="dialog" aria-modal="true" aria-labelledby="map-title">
-            <header className="map-dialog__header"><div><p>ЗОНА НА ПРЕБАРУВАЊЕ · ДЕМО</p><h2 id="map-title">Изберете дел од {selectedCity}</h2></div><button className="dialog-close" type="button" aria-label="Затвори мапа" onClick={() => setMapOpen(false)}><Icon name="close" size={19} /></button></header>
-            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className={mapFilter.tool === "radius" ? "is-active" : ""} type="button" onClick={() => setMapTool("radius")}>Радиус</button><button className={mapFilter.tool === "polygon" ? "is-active" : ""} type="button" onClick={() => setMapTool("polygon")}>Нацртај зона</button></div>{mapFilter.tool === "radius" && <label className="map-radius-control"><span>Големина на радиус</span><input type="range" min="8" max="36" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{mapFilter.radius + " единици"}</strong></label>}<button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
+            <header className="map-dialog__header"><div><p>ЗОНА НА ПРЕБАРУВАЊЕ · СКОПЈЕ</p><h2 id="map-title">Изберете дел од {selectedCity}</h2></div><button className="dialog-close" type="button" aria-label="Затвори мапа" onClick={() => setMapOpen(false)}><Icon name="close" size={19} /></button></header>
+            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className={mapFilter.tool === "radius" ? "is-active" : ""} type="button" onClick={() => setMapTool("radius")}>Радиус</button><button className={mapFilter.tool === "polygon" ? "is-active" : ""} type="button" onClick={() => setMapTool("polygon")}>Нацртај зона</button></div>{mapFilter.tool === "radius" && <label className="map-radius-control"><span>Приближен радиус</span><input type="range" min="8" max="36" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{(Math.round((mapFilter.radius / 5.7) * 10) / 10).toLocaleString("mk-MK") + " km"}</strong></label>}<button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
             <div className="map-stage">
-              {selectedCity === "Скопје" ? <><svg ref={mapRef} className="skopje-map" viewBox="0 0 100 70" role="img" aria-label="Интерактивна демо мапа на Скопје" onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}><rect width="100" height="70" fill="#e8eee8" /><path d="M-3 42 C15 35 24 42 36 36 S61 39 78 31 S92 31 104 24" fill="none" stroke="#8db6c6" strokeWidth="2.7" /><path d="M8 13 C25 24 37 15 51 25 S72 21 92 15" fill="none" stroke="#c7d3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M14 64 C30 51 42 58 53 49 S79 55 95 45" fill="none" stroke="#cad3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M19 2 L30 68M46 0 L42 69M72 1 L63 69M2 24 L98 36M3 55 L98 47" fill="none" stroke="#f8fbf8" strokeWidth="1.3" opacity=".9" /><text x="18" y="20" className="skopje-map__label">ЃОРЧЕ</text><text x="34" y="28" className="skopje-map__label">КАРПОШ</text><text x="46" y="36" className="skopje-map__label">ЦЕНТАР</text><text x="68" y="42" className="skopje-map__label">АЕРОДРОМ</text><text x="54" y="15" className="skopje-map__label">БУТЕЛ</text>{mapFilter.tool === "radius" && mapFilter.center && <circle cx={mapFilter.center.x} cy={mapFilter.center.y} r={mapFilter.radius} className="skopje-map__radius" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 1 && <polyline points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 2 && <polygon points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon-fill" />}</svg><div className="map-pin-layer" aria-label="Демо огласи на мапата">{mapPins.map((listing) => <button type="button" key={listing.id} className={mapFocusId === listing.id ? "map-pin is-active" : "map-pin"} style={{ left: listing.map.x + "%", top: (listing.map.y / 70) * 100 + "%" }} aria-label={listing.title + ", " + formatEuro(listing.priceEur)} onPointerDown={(event) => event.stopPropagation()} onClick={() => setMapFocusId(listing.id)}>{formatEuro(listing.priceEur).replace(" €", "€")}</button>)}</div>{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Мапата во оваа демо-верзија е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
+              {selectedCity === "Скопје" ? <><svg ref={mapRef} className="skopje-map" viewBox="0 0 100 70" role="img" aria-label="Интерактивна мапа на Скопје" onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}><rect width="100" height="70" fill="#e8eee8" /><path d="M-3 42 C15 35 24 42 36 36 S61 39 78 31 S92 31 104 24" fill="none" stroke="#8db6c6" strokeWidth="2.7" /><path d="M8 13 C25 24 37 15 51 25 S72 21 92 15" fill="none" stroke="#c7d3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M14 64 C30 51 42 58 53 49 S79 55 95 45" fill="none" stroke="#cad3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M19 2 L30 68M46 0 L42 69M72 1 L63 69M2 24 L98 36M3 55 L98 47" fill="none" stroke="#f8fbf8" strokeWidth="1.3" opacity=".9" /><text x="18" y="20" className="skopje-map__label">ЃОРЧЕ</text><text x="34" y="28" className="skopje-map__label">КАРПОШ</text><text x="46" y="36" className="skopje-map__label">ЦЕНТАР</text><text x="68" y="42" className="skopje-map__label">АЕРОДРОМ</text><text x="54" y="15" className="skopje-map__label">БУТЕЛ</text>{mapFilter.tool === "radius" && mapFilter.center && <circle cx={mapFilter.center.x} cy={mapFilter.center.y} r={mapFilter.radius} className="skopje-map__radius" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 1 && <polyline points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 2 && <polygon points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon-fill" />}</svg><div className="map-pin-layer" aria-label="Огласи на мапата">{mapPins.map((listing) => <button type="button" key={listing.id} className={mapFocusId === listing.id ? "map-pin is-active" : "map-pin"} style={{ left: listing.map.x + "%", top: (listing.map.y / 70) * 100 + "%" }} aria-label={listing.title + ", " + formatEuro(listing.priceEur)} onPointerDown={(event) => event.stopPropagation()} onClick={() => setMapFocusId(listing.id)}>{formatEuro(listing.priceEur).replace(" €", "€")}</button>)}</div>{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Интерактивната зона моментално е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
             </div>
             <footer className="map-dialog__footer"><span>{mapFilter.tool === "radius" ? "Кликнете на мапата за центар на радиус." : "Повлечете по мапата за да нацртате област."}</span><button className="button button--primary" type="button" onClick={() => setMapOpen(false)}>Потврди зона <Icon name="check" size={18} /></button></footer>
           </section>
@@ -1243,7 +1323,7 @@ export default function HomeClient() {
       {publishOpen && (
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishOpen(false); }}>
           <section className="compact-dialog" role="dialog" aria-modal="true" aria-labelledby="publish-title">
-            <header className="compact-dialog__header"><div><p>ОБЈАВИ ОГЛАС</p><h2 id="publish-title">Внесете ги основните точни податоци.</h2></div><button className="dialog-close" type="button" aria-label="Затвори форма за оглас" onClick={() => setPublishOpen(false)}><Icon name="close" size={19} /></button></header>
+            <header className="compact-dialog__header"><div><p>{editingListingId ? "УРЕДИ ОГЛАС" : "ОБЈАВИ ОГЛАС"}</p><h2 id="publish-title">{editingListingId ? "Изменете ги податоците и испратете на нова проверка." : "Внесете ги основните точни податоци."}</h2></div><button className="dialog-close" type="button" aria-label="Затвори форма за оглас" onClick={() => { setPublishOpen(false); setEditingListingId(null); }}><Icon name="close" size={19} /></button></header>
             <form className="publish-form" onSubmit={handlePublish}>
               <label className="field-block field-block--wide"><span>Наслов на оглас</span><input required placeholder="на пр. Трособен стан во Аеродром" value={publishForm.title} onChange={(event) => setPublishForm((current) => ({ ...current, title: event.target.value }))} /></label>
               <label className="field-block"><span>Тип</span><select value={publishForm.propertyType} onChange={(event) => setPublishForm((current) => ({ ...current, propertyType: event.target.value as PropertyType }))}>{propertyTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
@@ -1256,8 +1336,11 @@ export default function HomeClient() {
               <label className="field-block"><span>Населба</span><select value={publishForm.neighborhood} onChange={(event) => setPublishForm((current) => ({ ...current, neighborhood: event.target.value }))}>{(skopjeMunicipalities.find((item) => item.name === publishForm.municipality)?.neighborhoods ?? []).map((item) => <option key={item}>{item}</option>)}</select></label>
               <label className="field-block"><span>Состојба</span><select value={publishForm.construction} onChange={(event) => setPublishForm((current) => ({ ...current, construction: event.target.value as ConstructionState }))}><option value="built">Изградено</option><option value="in_progress">ВО ТЕК НА ГРАДБА</option></select></label>
               {publishForm.construction === "built" && <label className="field-block"><span>Година на градба</span><input required min="1800" max="2030" type="number" placeholder="на пр. 2018" value={publishForm.year} onChange={(event) => setPublishForm((current) => ({ ...current, year: event.target.value }))} /></label>}
-              <p className="form-helper">Огласот се зачувува како „чека проверка“. За агенција или инвеститор е потребна претходно одобрена организација.</p>
-              <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => setPublishOpen(false)} disabled={publishing}>Откажи</button><button className="button button--primary" type="submit" disabled={publishing}>{publishing ? "Се испраќа…" : "Испрати на проверка"} <Icon name="arrow" size={18} /></button></div>
+              <label className="field-block"><span>Географска ширина (по избор)</span><input inputMode="decimal" placeholder="на пр. 41.9981" value={publishForm.latitude} onChange={(event) => setPublishForm((current) => ({ ...current, latitude: event.target.value }))} /></label>
+              <label className="field-block"><span>Географска должина (по избор)</span><input inputMode="decimal" placeholder="на пр. 21.4254" value={publishForm.longitude} onChange={(event) => setPublishForm((current) => ({ ...current, longitude: event.target.value }))} /></label>
+              <label className="field-block field-block--wide"><span>Линкови до фотографии (по еден HTTPS линк во ред, до 6)</span><textarea rows={4} placeholder="https://…/stan-1.jpg" value={publishForm.photoUrls} onChange={(event) => setPublishForm((current) => ({ ...current, photoUrls: event.target.value }))} /></label>
+              <p className="form-helper">Фотографиите се прикажуваат во галеријата на огласот. Огласот се зачувува како „чека проверка“. За агенција или инвеститор е потребна претходно одобрена организација.</p>
+              <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => { setPublishOpen(false); setEditingListingId(null); }} disabled={publishing}>Откажи</button><button className="button button--primary" type="submit" disabled={publishing}>{publishing ? "Се испраќа…" : editingListingId ? "Испрати измени" : "Испрати на проверка"} <Icon name="arrow" size={18} /></button></div>
             </form>
           </section>
         </div>
@@ -1303,7 +1386,7 @@ export default function HomeClient() {
                   <button className={accountTab === "saved" ? "is-active" : ""} type="button" onClick={() => setAccountTab("saved")}>Омилени</button>
                 </nav>
                 {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Мои огласи</span><strong>{dashboard?.listings.total ?? ownedListings.length}</strong><small>во вашиот профил</small></article><article><span>Прегледи</span><strong>{dashboard?.views.total ?? 0}</strong><small>единствени дневни посети</small></article><article><span>Нови понуди</span><strong>{dashboard?.offers.incoming ?? accountOffers.filter((offer) => offer.direction === "incoming").length}</strong><small>примени понуди</small></article><article><span>Зачувани</span><strong>{dashboard?.favorites ?? serverFavoriteIds.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Активност во последни 30 дена</span><strong>{dashboard?.views.last30Days ?? 0} единствени прегледи</strong><small>Се бројат само одобрени огласи и најмногу една посета по оглас дневно.</small></div>{dashboard?.activity.length ? <div className="bar-chart bar-chart--live" aria-label="Прегледи на најгледаните ваши огласи">{dashboard.activity.map((item) => <i key={item.listingId} title={item.title + ": " + item.views + " прегледи"} style={{ height: Math.max(18, Math.round((item.views / Math.max(...dashboard.activity.map((row) => row.views), 1)) * 100)) + "%" }} />)}</div> : <p className="analytics-card__empty">Кога ќе има прегледи на ваши огласи, ќе се појават тука.</p>}</div>{dashboard?.activity.length ? <div className="activity-list">{dashboard.activity.slice(0, 3).map((item) => <p key={item.listingId}><span>{item.title}</span><strong>{item.views} прегледи · {item.incomingOffers} понуди</strong></p>)}</div> : null}</div>}
-                {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)}</span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
+                {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)} · <button type="button" onClick={() => openEditListing(listing)}>Уреди</button></span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
                 {accountTab === "offers" && <div className="workspace-list"><strong>Понуди и пораки</strong>{accountOffers.length ? accountOffers.map((offer) => <article className="offer-row" key={offer.id}><div><span>{offer.direction === "incoming" ? "Примена" : "Испратена"} {offer.kind === "offer" ? "понуда" : "порака"}</span><p>{offer.message}</p><small>{offer.listingTitle}{offer.amountCents ? " · " + formatEuro(offer.amountCents / 100) : ""}</small></div><div className="offer-row__side"><em className={`offer-status offer-status--${offer.status}`}>{offer.status === "sent" ? "Во очекување" : offer.status === "accepted" ? "Прифатена" : offer.status === "declined" ? "Одбиена" : "Повлечена"}</em>{offer.status === "sent" && (offer.direction === "incoming" ? <div className="offer-row__actions"><button type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "accepted")}>Прифати</button><button className="offer-row__decline" type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "declined")}>Одбиј</button></div> : <button type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "withdrawn")}>{offerMutatingId === offer.id ? "Се зачувува…" : "Повлечи"}</button>)}</div></article>) : <p>Сè уште нема понуди или пораки.</p>}</div>}
                 {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong>{favoriteListings.length ? favoriteListings.map((listing) => <p key={listing.id}>{listing.title}<span>{listing.city}</span></p>) : <p>{fixtureFavoriteIds.length ? fixtureFavoriteIds.length + " демо огласи се зачувани само во оваа сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p>}</div>}
               </div>
@@ -1327,7 +1410,8 @@ export default function HomeClient() {
             {adminAccess === "denied" && <div className="admin-state"><strong>Немате администраторски пристап.</strong><p>Админ-улогите се доделуваат безбедно надвор од јавната страница. Најавете се со одобрениот профил или контактирајте го сопственикот на платформата.</p></div>}
             {adminAccess === "error" && <div className="admin-state"><strong>Не успеавме да го провериме пристапот.</strong><p>{adminError || "Обидете се повторно."}</p><button className="button button--primary" type="button" onClick={() => void openAdmin()}>Обиди се повторно</button></div>}
             {adminAccess === "granted" && <>
-              <div className="admin-filter-bar" role="group" aria-label="Статус на огласи">
+              <div className="admin-section-tabs" role="group" aria-label="Администраторски дел"><button className={adminSection === "listings" ? "is-active" : ""} type="button" onClick={() => setAdminSection("listings")}>Огласи</button><button className={adminSection === "organizations" ? "is-active" : ""} type="button" onClick={() => { setAdminSection("organizations"); void loadAdminOrganizations(organizationFilter); }}>Агенции и фирми</button></div>
+              {adminSection === "listings" && <><div className="admin-filter-bar" role="group" aria-label="Статус на огласи">
                 {(["pending", "approved", "rejected", "archived"] as const).map((status) => <button key={status} className={adminFilter === status ? "is-active" : ""} type="button" disabled={adminLoading || adminMutatingListingId !== null} onClick={() => void loadAdminListings(status)}>{ownerStatusLabel(status)}</button>)}
               </div>
               <div className="admin-note">
@@ -1338,6 +1422,8 @@ export default function HomeClient() {
               <div className="admin-list">
                 {adminLoading ? <p className="admin-empty">Се вчитуваат огласите…</p> : adminListings.length ? adminListings.map((listing) => <article className="admin-row" key={listing.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + listing.status}>{ownerStatusLabel(listing.status)}</span><strong>{listing.title}</strong><small>{formatEuro(listing.priceAmountCents / 100) + " · " + listing.addressLine}</small></div><div className="admin-row__actions">{listing.status === "pending" && <button type="button" disabled={adminMutatingListingId !== null} onClick={() => void moderateListing(listing.id, "approved")}>{adminMutatingListingId === listing.id ? "Се зачувува…" : "Одобри"}</button>}{listing.status === "pending" && <button type="button" className="admin-row__reject" disabled={adminMutatingListingId !== null} onClick={() => void moderateListing(listing.id, "rejected")}>Одбиј</button>}{listing.status !== "archived" && <button type="button" className="admin-row__delete" disabled={adminMutatingListingId !== null} aria-label="Архивирај оглас" onClick={() => void moderateListing(listing.id, "archived")}><Icon name="trash" size={16} /></button>}</div></article>) : <p className="admin-empty">Нема огласи со овој статус.</p>}
               </div>
+              </>}
+              {adminSection === "organizations" && <><div className="admin-filter-bar" role="group" aria-label="Статус на организации">{(["pending", "verified", "suspended"] as const).map((status) => <button key={status} className={organizationFilter === status ? "is-active" : ""} type="button" disabled={adminLoading || adminMutatingOrganizationId !== null} onClick={() => void loadAdminOrganizations(status)}>{status === "pending" ? "Чека проверка" : status === "verified" ? "Потврдени" : "Суспендирани"}</button>)}</div><div className="admin-list">{adminLoading ? <p className="admin-empty">Се вчитуваат организациите…</p> : adminOrganizations.length ? adminOrganizations.map((organization) => <article className="admin-row" key={organization.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + organization.status}>{organization.status === "pending" ? "Чека проверка" : organization.status === "verified" ? "Потврдена" : "Суспендирана"}</span><strong>{organization.displayName}</strong><small>{organization.kind === "agency" ? "Агенција за недвижности" : "Инвеститор / градежна фирма"}{organization.legalName ? " · " + organization.legalName : ""}</small></div><div className="admin-row__actions">{organization.status !== "verified" && <button type="button" disabled={adminMutatingOrganizationId !== null} onClick={() => void moderateOrganization(organization.id, "verified")}>{adminMutatingOrganizationId === organization.id ? "Се зачувува…" : "Потврди"}</button>}{organization.status !== "suspended" && <button className="admin-row__reject" type="button" disabled={adminMutatingOrganizationId !== null} onClick={() => void moderateOrganization(organization.id, "suspended")}>Суспендирај</button>}</div></article>) : <p className="admin-empty">Нема организации со овој статус.</p>}</div></>}
             </>}
             {adminAccess === "checking" && adminError && <p className="admin-feedback">{adminError}</p>}
           </section>
@@ -1348,7 +1434,7 @@ export default function HomeClient() {
         <div className="workflow-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailListingId(null); }}>
           <section className="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
             <div className="detail-dialog__image"><Image src="/images/doma-hero.png" alt="" fill sizes="(max-width: 720px) 100vw, 700px" style={{ objectFit: "cover", objectPosition: selectedDetail.photoPosition }} /><div /><button className="dialog-close detail-dialog__close" type="button" aria-label="Затвори детали" onClick={() => setDetailListingId(null)}><Icon name="close" size={19} /></button><span>{selectedDetail.badge ?? "ДЕМО ОГЛАС"}</span></div>
-            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2><p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><div className="detail-dialog__actions">{offerListing ? <button className="button button--outline" type="button" onClick={openOfferForm}>Прати порака / понуда</button> : <small>За демо огласите не се испраќаат пораки или понуди.</small>}<button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div></div>
+            <div className="detail-dialog__body"><p className="eyebrow">{selectedDetail.propertyType + " · " + selectedDetail.municipality + " · " + selectedDetail.neighborhood}</p><h2 id="detail-title">{selectedDetail.title}</h2>{selectedDetail.photoUrls?.length ? <div className="listing-gallery" aria-label="Фотографии од огласот">{selectedDetail.photoUrls.map((url, index) => <img /* eslint-disable-line @next/next/no-img-element -- user-provided HTTPS galleries are rendered without server image proxying */ src={url} alt={selectedDetail.title + " – фотографија " + (index + 1)} key={url} loading="lazy" />)}</div> : null}<p className="detail-address"><Icon name="pin" size={17} />Адреса: {selectedDetail.address}</p><div className="detail-price"><strong>{formatEuro(selectedDetail.priceEur)}</strong><span>{selectedDetail.intent === "rent" ? "/ месечно" : ""}<small>{pricePerSquareMeter(selectedDetail) + " €/m²" + (selectedDetail.intent === "rent" ? " месечно" : "")}</small></span></div><div className="detail-specs"><span>{selectedDetail.areaM2 + " m²"}</span><span>{selectedDetail.rooms ? selectedDetail.rooms + " соби" : "Специјален имот"}</span><span>{selectedDetail.floor ?? "Кат не е внесен"}</span><span>{selectedDetail.elevator ? "Со лифт" : "Без лифт"}</span><span>{selectedDetail.parking}</span><span>{selectedDetail.heating}</span><span>{selectedDetail.cooling}</span><span>{constructionLabel(selectedDetail)}</span></div><div className="detail-features"><strong>Дополнителни информации</strong><ul>{selectedDetail.features.map((feature) => <li key={feature}><Icon name="check" size={15} />{feature}</li>)}</ul>{selectedDetail.completionText && <p>{selectedDetail.completionText}</p>}</div><div className="detail-dialog__footer"><span>{publisherLabels[selectedDetail.publisherType] + " · " + selectedDetail.publisherName}</span><div className="detail-dialog__actions">{offerListing ? <button className="button button--outline" type="button" onClick={openOfferForm}>Прати порака / понуда</button> : <small>За демо огласите не се испраќаат пораки или понуди.</small>}<button className="button button--primary" type="button" onClick={() => { void toggleFavorite(selectedDetail.id); }}>Зачувај оглас <Icon name="heart" size={17} filled={favoriteIds.includes(selectedDetail.id)} /></button></div></div></div>
           </section>
         </div>
       )}

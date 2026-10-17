@@ -39,6 +39,7 @@ export type Listing = {
   views: number;
   status: ListingStatus;
   photoPosition: string;
+  photoUrls?: string[];
   map: { x: number; y: number };
   features: string[];
   badge?: string;

@@ -45,6 +45,7 @@ export const listingInputSchema = z
     builtYear: z.number().int().min(1800).max(2100).nullable().optional(),
     completionDate: z.string().date().nullable().optional(),
     features: z.array(z.string().trim().min(1).max(64)).max(30).default([]),
+    photoUrls: z.array(z.string().url().max(2_000)).max(6).default([]),
   })
   .strict()
   .superRefine((value, context) => {
@@ -247,7 +248,7 @@ export function toPublicListing(row: ListingRow) {
     constructionState: row.constructionState,
     builtYear: row.builtYear,
     completionDate: row.completionDate,
-    features: parseFeatures(row.featuresJson),
+    ...parseListingMetadata(row.featuresJson),
     publishedAt: row.publishedAt,
   };
 }
@@ -256,6 +257,8 @@ export function toOwnerListing(row: ListingRow) {
   return {
     ...toPublicListing(row),
     addressLine: row.addressLine,
+    latitudeE6: row.latitudeE6,
+    longitudeE6: row.longitudeE6,
     exactLocationPublic: row.exactLocationPublic,
     status: row.status,
     moderationNote: row.moderationNote,
@@ -276,13 +279,25 @@ export function canTransition(
   );
 }
 
-function parseFeatures(value: string): string[] {
+function parseListingMetadata(value: string): { features: string[]; photoUrls: string[] } {
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
+    if (Array.isArray(parsed)) {
+      return { features: parsed.filter((item): item is string => typeof item === "string"), photoUrls: [] };
+    }
+    if (parsed && typeof parsed === "object") {
+      const metadata = parsed as { features?: unknown; photoUrls?: unknown };
+      return {
+        features: Array.isArray(metadata.features)
+          ? metadata.features.filter((item): item is string => typeof item === "string")
+          : [],
+        photoUrls: Array.isArray(metadata.photoUrls)
+          ? metadata.photoUrls.filter((item): item is string => typeof item === "string" && /^https:\/\//.test(item)).slice(0, 6)
+          : [],
+      };
+    }
   } catch {
-    return [];
+    // Backward-compatible fallback for malformed legacy data.
   }
+  return { features: [], photoUrls: [] };
 }

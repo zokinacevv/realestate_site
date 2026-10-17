@@ -147,7 +147,7 @@ export async function POST(request: Request) {
       constructionState: input.constructionState,
       builtYear: input.builtYear ?? null,
       completionDate: input.completionDate ?? null,
-      featuresJson: JSON.stringify(input.features),
+      featuresJson: JSON.stringify({ features: input.features, photoUrls: input.photoUrls }),
       submittedAt,
       createdAt: submittedAt,
       updatedAt: submittedAt,

@@ -1805,6 +1805,9 @@ select:focus-visible {
   line-height: 1.45;
 }
 
+.publish-form textarea { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #d8e1db; border-radius: 8px; padding: 10px 11px; outline: none; background: var(--white); color: var(--ink); font: inherit; font-size: 13px; line-height: 1.45; }
+.publish-form textarea:focus { border-color: var(--forest); box-shadow: 0 0 0 3px rgba(64, 134, 111, 0.13); }
+
 .offer-form textarea:focus { border-color: var(--forest); box-shadow: 0 0 0 3px rgba(64, 134, 111, 0.13); }
 
 .offer-feedback {
@@ -2032,6 +2035,13 @@ select:focus-visible {
 
 .admin-state strong { color: var(--forest-deep); font-size: 14px; }
 .admin-state p { max-width: 580px; margin: 9px 0 0; }
+.footer-links { display: flex; gap: 13px; }
+.footer-links a { color: inherit; font-size: 11px; text-decoration: none; }
+.footer-links a:hover { text-decoration: underline; }
+
+.admin-section-tabs { display: flex; gap: 8px; border-bottom: 1px solid #e4e8e4; padding: 14px 22px 0; }
+.admin-section-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 4px; color: #6a7a73; font: inherit; font-size: 12px; font-weight: 800; }
+.admin-section-tabs button.is-active { border-bottom-color: var(--forest); color: var(--forest-deep); }
 
 .admin-note {
   display: grid;
@@ -2250,6 +2260,8 @@ select:focus-visible {
 }
 
 .detail-dialog__footer > span { color: #5f716a; font-size: 11px; font-weight: 750; }
+.listing-gallery { display: grid; grid-auto-columns: minmax(210px, 1fr); grid-auto-flow: column; gap: 9px; max-width: 100%; overflow-x: auto; padding: 12px 0 2px; }
+.listing-gallery img { width: 100%; height: 150px; border-radius: 9px; object-fit: cover; background: #eef2ee; }
 .detail-dialog__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .detail-dialog__actions small { max-width: 210px; color: #718079; font-size: 10px; line-height: 1.4; text-align: right; }
 
