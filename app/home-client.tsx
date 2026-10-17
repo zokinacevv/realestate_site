@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
-  type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
   useRef,
@@ -27,6 +26,7 @@ import {
 } from "./market-data";
 
 const LocationPicker = dynamic(() => import("./location-picker"), { ssr: false });
+const SearchMap = dynamic(() => import("./search-map"), { ssr: false });
 
 type IconName =
   | "arrow"
@@ -354,6 +354,10 @@ function coordinatesToMapPoint(latitudeE6: number | null, longitudeE6: number | 
   };
 }
 
+function mapPointToCoordinates(point: MapPoint) {
+  return { latitude: 42.08 - (point.y / 70) * 0.08, longitude: 21.31 + (point.x / 100) * 0.21 };
+}
+
 async function errorMessage(response: Response, fallback: string) {
   const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
   return typeof payload?.error === "string" ? payload.error : fallback;
@@ -538,8 +542,6 @@ export default function HomeClient() {
   const [adminMutatingOrganizationId, setAdminMutatingOrganizationId] = useState<string | null>(null);
   const [detailListingId, setDetailListingId] = useState<string | null>(null);
   const [mapFocusId, setMapFocusId] = useState<string | null>(null);
-  const [isDrawingMap, setIsDrawingMap] = useState(false);
-  const mapRef = useRef<SVGSVGElement>(null);
   const adminRequestIdRef = useRef(0);
   const favoriteIds = useMemo(
     () => Array.from(new Set([...fixtureFavoriteIds, ...serverFavoriteIds])),
@@ -668,6 +670,13 @@ export default function HomeClient() {
     [listingInventory, mapBaseSearch],
   );
   const focusedMapListing = mapPins.find((listing) => listing.id === mapFocusId) ?? null;
+  const streetMapListings = useMemo(() => mapPins.map((listing) => {
+    const location = listing.latitude != null && listing.longitude != null
+      ? { latitude: listing.latitude, longitude: listing.longitude }
+      : mapPointToCoordinates(listing.map);
+    return { id: listing.id, title: listing.title, price: formatEuro(listing.priceEur), ...location };
+  }), [mapPins]);
+  const streetMapCenter = mapFilter.center ? mapPointToCoordinates(mapFilter.center) : null;
 
   function scrollToListings() {
     document.getElementById("oglasi")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1073,35 +1082,8 @@ export default function HomeClient() {
     setMapFilter((current) => ({ ...current, tool, center: tool === "radius" ? current.center : null, polygon: tool === "polygon" ? current.polygon : [] }));
     setMapFocusId(null);
   }
-  function getMapPoint(event: ReactPointerEvent<SVGSVGElement>): MapPoint {
-    const bounds = mapRef.current?.getBoundingClientRect();
-    if (!bounds) return { x: 50, y: 35 };
-    return { x: Math.max(0, Math.min(100, ((event.clientX - bounds.left) / bounds.width) * 100)), y: Math.max(0, Math.min(70, ((event.clientY - bounds.top) / bounds.height) * 70)) };
-  }
-  function handleMapPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
-    if (selectedCity !== "Скопје") return;
-    const point = getMapPoint(event);
-    if (mapFilter.tool === "radius") {
-      setMapFilter((current) => ({ ...current, center: point }));
-      return;
-    }
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setMapFocusId(null);
-    setMapFilter((current) => ({ ...current, polygon: [point] }));
-    setIsDrawingMap(true);
-  }
-  function handleMapPointerMove(event: ReactPointerEvent<SVGSVGElement>) {
-    if (!isDrawingMap || mapFilter.tool !== "polygon") return;
-    const point = getMapPoint(event);
-    setMapFilter((current) => {
-      const lastPoint = current.polygon[current.polygon.length - 1];
-      if (lastPoint && Math.hypot(lastPoint.x - point.x, lastPoint.y - point.y) < 1.4) return current;
-      return { ...current, polygon: [...current.polygon, point] };
-    });
-  }
-  function handleMapPointerUp(event: ReactPointerEvent<SVGSVGElement>) {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    setIsDrawingMap(false);
+  function setStreetMapCenter(location: { latitude: number; longitude: number }) {
+    setMapFilter((current) => ({ ...current, tool: "radius", center: coordinatesToMapPoint(Math.round(location.latitude * 1_000_000), Math.round(location.longitude * 1_000_000)) }));
   }
   async function handlePublish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1348,11 +1330,11 @@ export default function HomeClient() {
         <div className="workflow-backdrop map-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMapOpen(false); }}>
           <section className="map-dialog" role="dialog" aria-modal="true" aria-labelledby="map-title">
             <header className="map-dialog__header"><div><p>ЗОНА НА ПРЕБАРУВАЊЕ · СКОПЈЕ</p><h2 id="map-title">Изберете дел од {selectedCity}</h2></div><button className="dialog-close" type="button" aria-label="Затвори мапа" onClick={() => setMapOpen(false)}><Icon name="close" size={19} /></button></header>
-            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className={mapFilter.tool === "radius" ? "is-active" : ""} type="button" onClick={() => setMapTool("radius")}>Радиус</button><button className={mapFilter.tool === "polygon" ? "is-active" : ""} type="button" onClick={() => setMapTool("polygon")}>Нацртај зона</button></div>{mapFilter.tool === "radius" && <label className="map-radius-control"><span>Приближен радиус</span><input type="range" min="8" max="36" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{(Math.round((mapFilter.radius / 5.7) * 10) / 10).toLocaleString("mk-MK") + " km"}</strong></label>}<button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
+            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className="is-active" type="button" onClick={() => setMapTool("radius")}>Радиус</button></div><label className="map-radius-control"><span>Радиус на пребарување</span><input type="range" min="8" max="36" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{(Math.round((mapFilter.radius / 5.7) * 10) / 10).toLocaleString("mk-MK") + " km"}</strong></label><button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
             <div className="map-stage">
-              {selectedCity === "Скопје" ? <><svg ref={mapRef} className="skopje-map" viewBox="0 0 100 70" role="img" aria-label="Интерактивна мапа на Скопје" onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}><rect width="100" height="70" fill="#e8eee8" /><path d="M-3 42 C15 35 24 42 36 36 S61 39 78 31 S92 31 104 24" fill="none" stroke="#8db6c6" strokeWidth="2.7" /><path d="M8 13 C25 24 37 15 51 25 S72 21 92 15" fill="none" stroke="#c7d3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M14 64 C30 51 42 58 53 49 S79 55 95 45" fill="none" stroke="#cad3c8" strokeWidth="1.5" strokeDasharray="2 2" /><path d="M19 2 L30 68M46 0 L42 69M72 1 L63 69M2 24 L98 36M3 55 L98 47" fill="none" stroke="#f8fbf8" strokeWidth="1.3" opacity=".9" /><text x="18" y="20" className="skopje-map__label">ЃОРЧЕ</text><text x="34" y="28" className="skopje-map__label">КАРПОШ</text><text x="46" y="36" className="skopje-map__label">ЦЕНТАР</text><text x="68" y="42" className="skopje-map__label">АЕРОДРОМ</text><text x="54" y="15" className="skopje-map__label">БУТЕЛ</text>{mapFilter.tool === "radius" && mapFilter.center && <circle cx={mapFilter.center.x} cy={mapFilter.center.y} r={mapFilter.radius} className="skopje-map__radius" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 1 && <polyline points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon" />}{mapFilter.tool === "polygon" && mapFilter.polygon.length > 2 && <polygon points={mapFilter.polygon.map((point) => point.x + "," + point.y).join(" ")} className="skopje-map__polygon-fill" />}</svg><div className="map-pin-layer" aria-label="Огласи на мапата">{mapPins.map((listing) => <button type="button" key={listing.id} className={mapFocusId === listing.id ? "map-pin is-active" : "map-pin"} style={{ left: listing.map.x + "%", top: (listing.map.y / 70) * 100 + "%" }} aria-label={listing.title + ", " + formatEuro(listing.priceEur)} onPointerDown={(event) => event.stopPropagation()} onClick={() => setMapFocusId(listing.id)}>{formatEuro(listing.priceEur).replace(" €", "€")}</button>)}</div>{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Интерактивната зона моментално е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
+              {selectedCity === "Скопје" ? <><SearchMap center={streetMapCenter} radiusMeters={Math.round((mapFilter.radius / 5.7) * 1000)} listings={streetMapListings} onCenterChange={setStreetMapCenter} onListingClick={setMapFocusId} />{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Интерактивната зона моментално е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
             </div>
-            <footer className="map-dialog__footer"><span>{mapFilter.tool === "radius" ? "Кликнете на мапата за центар на радиус." : "Повлечете по мапата за да нацртате област."}</span><button className="button button--primary" type="button" onClick={() => setMapOpen(false)}>Потврди зона <Icon name="check" size={18} /></button></footer>
+            <footer className="map-dialog__footer"><span>Кликнете на улица за центар на радиусот; зелената зона ги филтрира огласите.</span><button className="button button--primary" type="button" onClick={() => setMapOpen(false)}>Потврди зона <Icon name="check" size={18} /></button></footer>
           </section>
         </div>
       )}
