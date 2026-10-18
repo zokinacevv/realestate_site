@@ -16,7 +16,7 @@ const updateSchema = z.object({
 export async function GET(request: Request) {
   const user = await currentUser();
   if (!user) return error("Потребна е најава.", 401);
-  if (!(await isModerator(user.userId))) return error("Немаш администраторска дозвола.", 403);
+  if (!(await isModerator(user.userId, user.email))) return error("Немаш администраторска дозвола.", 403);
   const status = filterSchema.safeParse(new URL(request.url).searchParams.get("status") ?? "pending");
   if (!status.success) return error("Невалиден статус.", 422);
   const db = getDb();
@@ -34,7 +34,7 @@ export async function PATCH(request: Request) {
   if (requestError) return error(requestError, 403);
   const user = await currentUser();
   if (!user) return error("Потребна е најава.", 401);
-  if (!(await isModerator(user.userId))) return error("Немаш администраторска дозвола.", 403);
+  if (!(await isModerator(user.userId, user.email))) return error("Немаш администраторска дозвола.", 403);
   let body: unknown;
   try { body = await readJson(request); } catch { return error("Невалидни податоци.", 400); }
   const parsed = updateSchema.safeParse(body);

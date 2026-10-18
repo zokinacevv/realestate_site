@@ -28,7 +28,7 @@ const moderationInput = z
 export async function GET(request: Request) {
   const user = await currentUser();
   if (!user) return error("Потребна е најава.", 401);
-  if (!(await isModerator(user.userId))) {
+  if (!(await isModerator(user.userId, user.email))) {
     return error("Немаш администраторска дозвола.", 403);
   }
 
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
 
   const user = await currentUser();
   if (!user) return error("Потребна е најава.", 401);
-  if (!(await isModerator(user.userId))) {
+  if (!(await isModerator(user.userId, user.email))) {
     return error("Немаш администраторска дозвола.", 403);
   }
 

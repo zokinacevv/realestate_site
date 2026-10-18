@@ -26,7 +26,7 @@ export async function GET() {
       createdAt: profile[0]?.createdAt ?? null,
     },
     permissions: {
-      canModerateListings: await isModerator(user.userId),
+      canModerateListings: await isModerator(user.userId, user.email),
     },
   });
 }

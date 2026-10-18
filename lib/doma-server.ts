@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { env } from "cloudflare:workers";
 
 import { getChatGPTUser, type ChatGPTUser } from "@/app/chatgpt-auth";
 import { getDb } from "@/db";
@@ -153,7 +154,9 @@ export async function currentUser(): Promise<ChatGPTUser | null> {
   return user;
 }
 
-export async function isModerator(userId: string): Promise<boolean> {
+export async function isModerator(userId: string, email?: string | null): Promise<boolean> {
+  const configuredAdminEmail = typeof env.DOMA_ADMIN_EMAIL === "string" ? env.DOMA_ADMIN_EMAIL.trim().toLowerCase() : "";
+  if (configuredAdminEmail && email?.trim().toLowerCase() === configuredAdminEmail) return true;
   const db = getDb();
   const role = await db
     .select({ role: userRoles.role })
