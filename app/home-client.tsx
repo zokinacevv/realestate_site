@@ -253,7 +253,7 @@ function createEmptyAdvancedFilters(): AdvancedFilters {
 }
 
 function createEmptyMapFilter(): MapFilter {
-  return { tool: "radius", center: null, radius: 18, polygon: [] };
+  return { tool: "radius", center: null, radius: 1000, polygon: [] };
 }
 
 function createEmptyPublishForm(): PublishForm {
@@ -381,13 +381,22 @@ function pointInsidePolygon(point: MapPoint, polygon: MapPoint[]) {
 
 function matchesMap(listing: Listing, map: MapFilter) {
   if (map.tool === "radius" && map.center) {
-    const distance = Math.hypot(listing.map.x - map.center.x, listing.map.y - map.center.y);
-    return distance <= map.radius;
+    const point = mapPointToCoordinates(listing.map);
+    const center = mapPointToCoordinates(map.center);
+    return distanceInMeters(point.latitude, point.longitude, center.latitude, center.longitude) <= map.radius;
   }
   if (map.tool === "polygon" && map.polygon.length >= 3) {
     return pointInsidePolygon(listing.map, map.polygon);
   }
   return true;
+}
+
+function distanceInMeters(latitudeA: number, longitudeA: number, latitudeB: number, longitudeB: number) {
+  const radians = Math.PI / 180;
+  const latitudeDelta = (latitudeB - latitudeA) * radians;
+  const longitudeDelta = (longitudeB - longitudeA) * radians;
+  const value = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(latitudeA * radians) * Math.cos(latitudeB * radians) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 }
 
 function matchesSearch(listing: Listing, search: SearchSnapshot) {
@@ -677,6 +686,7 @@ export default function HomeClient() {
     return { id: listing.id, title: listing.title, price: formatEuro(listing.priceEur), ...location };
   }), [mapPins]);
   const streetMapCenter = mapFilter.center ? mapPointToCoordinates(mapFilter.center) : null;
+  const streetMapPolygon = useMemo(() => mapFilter.polygon.map(mapPointToCoordinates), [mapFilter.polygon]);
 
   function scrollToListings() {
     document.getElementById("oglasi")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1085,6 +1095,9 @@ export default function HomeClient() {
   function setStreetMapCenter(location: { latitude: number; longitude: number }) {
     setMapFilter((current) => ({ ...current, tool: "radius", center: coordinatesToMapPoint(Math.round(location.latitude * 1_000_000), Math.round(location.longitude * 1_000_000)) }));
   }
+  function setStreetMapPolygon(locations: Array<{ latitude: number; longitude: number }>) {
+    setMapFilter((current) => ({ ...current, polygon: locations.map((location) => coordinatesToMapPoint(Math.round(location.latitude * 1_000_000), Math.round(location.longitude * 1_000_000))) }));
+  }
   async function handlePublish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const price = Number(publishForm.price);
@@ -1330,11 +1343,11 @@ export default function HomeClient() {
         <div className="workflow-backdrop map-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMapOpen(false); }}>
           <section className="map-dialog" role="dialog" aria-modal="true" aria-labelledby="map-title">
             <header className="map-dialog__header"><div><p>ЗОНА НА ПРЕБАРУВАЊЕ · СКОПЈЕ</p><h2 id="map-title">Изберете дел од {selectedCity}</h2></div><button className="dialog-close" type="button" aria-label="Затвори мапа" onClick={() => setMapOpen(false)}><Icon name="close" size={19} /></button></header>
-            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className="is-active" type="button" onClick={() => setMapTool("radius")}>Радиус</button></div><label className="map-radius-control"><span>Радиус на пребарување</span><input type="range" min="8" max="36" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{(Math.round((mapFilter.radius / 5.7) * 10) / 10).toLocaleString("mk-MK") + " km"}</strong></label><button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
+            <div className="map-dialog__toolbar"><div className="map-tool-toggle" role="group" aria-label="Алатка за мапа"><button className={mapFilter.tool === "radius" ? "is-active" : ""} type="button" onClick={() => setMapTool("radius")}>Радиус</button><button className={mapFilter.tool === "polygon" ? "is-active" : ""} type="button" onClick={() => setMapTool("polygon")}>Нацртај зона</button></div>{mapFilter.tool === "radius" && <label className="map-radius-control"><span>Радиус на пребарување</span><input type="range" min="50" max="5000" step="50" value={mapFilter.radius} onChange={(event) => setMapFilter((current) => ({ ...current, radius: Number(event.target.value) }))} /><strong>{mapFilter.radius < 1000 ? mapFilter.radius + " m" : (mapFilter.radius / 1000).toLocaleString("mk-MK", { maximumFractionDigits: 2 }) + " km"}</strong></label>}<button className="map-clear-button" type="button" onClick={() => { setMapFilter(createEmptyMapFilter()); setMapFocusId(null); }}>Избриши зона</button></div>
             <div className="map-stage">
-              {selectedCity === "Скопје" ? <><SearchMap center={streetMapCenter} radiusMeters={Math.round((mapFilter.radius / 5.7) * 1000)} listings={streetMapListings} onCenterChange={setStreetMapCenter} onListingClick={setMapFocusId} />{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Интерактивната зона моментално е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
+              {selectedCity === "Скопје" ? <><SearchMap tool={mapFilter.tool} center={streetMapCenter} radiusMeters={mapFilter.radius} polygon={streetMapPolygon} listings={streetMapListings} onCenterChange={setStreetMapCenter} onPolygonChange={setStreetMapPolygon} onListingClick={setMapFocusId} />{focusedMapListing && <div className="map-preview-card"><button type="button" aria-label="Затвори преглед на мапа" onClick={() => setMapFocusId(null)}><Icon name="close" size={14} /></button><span>{focusedMapListing.municipality + " · " + focusedMapListing.neighborhood}</span><strong>{focusedMapListing.title}</strong><small>{formatEuro(focusedMapListing.priceEur) + " · " + focusedMapListing.areaM2 + " m²"}</small></div>}</> : <div className="map-not-ready"><Icon name="map" size={32} /><strong>Интерактивната зона моментално е достапна за Скопје.</strong><span>Основниот избор на град останува достапен за цела Македонија.</span></div>}
             </div>
-            <footer className="map-dialog__footer"><span>Кликнете на улица за центар на радиусот; зелената зона ги филтрира огласите.</span><button className="button button--primary" type="button" onClick={() => setMapOpen(false)}>Потврди зона <Icon name="check" size={18} /></button></footer>
+            <footer className="map-dialog__footer"><span>{mapFilter.tool === "radius" ? "Кликнете на улица за центар на радиусот." : "Држете и повлечете по мапата за слободно да ја нацртате зоната."}</span><button className="button button--primary" type="button" onClick={() => setMapOpen(false)}>Потврди зона <Icon name="check" size={18} /></button></footer>
           </section>
         </div>
       )}
