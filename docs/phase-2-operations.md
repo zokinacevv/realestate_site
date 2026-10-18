@@ -23,7 +23,7 @@ The public web application intentionally has no endpoint for assigning this role
 
 ## Partner accounts
 
-Agency and developer listings require a verified organization and an owner/editor membership. Organization approval and partner onboarding remain a controlled admin operation for the next phase.
+During first account setup, a visitor chooses whether the profile is for a physical person, agency, or company/investor. Agency and company setup creates a pending organization and an owner membership. Agency and developer listings still require that organization to be verified by an administrator before publishing; the account form does not grant verification automatically.
 
 ## Data quality
 

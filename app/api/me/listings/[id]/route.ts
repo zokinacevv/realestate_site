@@ -51,7 +51,13 @@ export async function PATCH(
   let publisher;
   try {
     publisher = await resolvePublisher(user.userId, input.publisherType, input.organizationId);
-  } catch {
+  } catch (reason) {
+    if (reason instanceof Error && reason.message === "ONBOARDING_REQUIRED") {
+      return error("Прво заврши го создавањето на профилот.", 409);
+    }
+    if (reason instanceof Error && reason.message === "PUBLISHER_TYPE_MISMATCH") {
+      return error("Типот на огласувач мора да одговара на типот на вашиот профил.", 422);
+    }
     return error("Немаш право да објавуваш во име на оваа организација.", 403);
   }
   const timestamp = new Date().toISOString();

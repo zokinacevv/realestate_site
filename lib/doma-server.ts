@@ -180,6 +180,30 @@ export async function resolvePublisher(
   organizationId: string | null;
   contactUserId: string;
 }> {
+  const db = getDb();
+  const profileRows = await db
+    .select({
+      accountType: profiles.accountType,
+      onboardingCompletedAt: profiles.onboardingCompletedAt,
+    })
+    .from(profiles)
+    .where(eq(profiles.id, userId))
+    .limit(1);
+  const profile = profileRows[0];
+  if (!profile?.accountType || !profile.onboardingCompletedAt) {
+    throw new Error("ONBOARDING_REQUIRED");
+  }
+
+  const expectedPublisherType: PublisherType =
+    profile.accountType === "agency"
+      ? "agency"
+      : profile.accountType === "company"
+        ? "developer"
+        : "owner";
+  if (publisherType !== expectedPublisherType) {
+    throw new Error("PUBLISHER_TYPE_MISMATCH");
+  }
+
   if (publisherType === "owner") {
     return { publisherType, organizationId: null, contactUserId: userId };
   }
@@ -188,7 +212,6 @@ export async function resolvePublisher(
     throw new Error("ORGANIZATION_REQUIRED");
   }
 
-  const db = getDb();
   const result = await db
     .select({
       kind: organizations.kind,
@@ -263,6 +286,7 @@ export function toPublicListing(row: ListingRow) {
 export function toOwnerListing(row: ListingRow) {
   return {
     ...toPublicListing(row),
+    organizationId: row.organizationId,
     addressLine: row.addressLine,
     latitudeE6: row.latitudeE6,
     longitudeE6: row.longitudeE6,

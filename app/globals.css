@@ -1873,6 +1873,144 @@ select:focus-visible {
 
 .account-create .button { justify-self: start; margin-top: 4px; }
 
+.account-dialog { overflow-y: auto; }
+
+.account-onboarding {
+  display: grid;
+  gap: 20px;
+  padding: 28px;
+}
+
+.account-onboarding__intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+}
+
+.account-onboarding__intro p {
+  max-width: 500px;
+  margin: 1px 0 0;
+  color: #65746f;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.account-type-options {
+  display: grid;
+  gap: 10px;
+}
+
+.account-type-options button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon title arrow"
+    "icon description arrow";
+  column-gap: 11px;
+  row-gap: 3px;
+  align-items: center;
+  border: 1px solid #dce6df;
+  border-radius: 12px;
+  padding: 13px;
+  background: #fbfcfa;
+  color: var(--ink);
+  text-align: left;
+}
+
+.account-type-options button:hover,
+.account-type-options button:focus-visible {
+  border-color: #7fb095;
+  outline: none;
+  background: #f0f7f2;
+  box-shadow: 0 0 0 3px rgba(64, 134, 111, 0.12);
+}
+
+.account-type-options__icon {
+  display: grid;
+  width: 41px;
+  height: 41px;
+  grid-area: icon;
+  place-items: center;
+  border-radius: 10px;
+  background: #e2efe7;
+  color: var(--forest);
+}
+
+.account-type-options strong { grid-area: title; font-size: 13px; }
+.account-type-options small { grid-area: description; color: #73817c; font-size: 10px; line-height: 1.35; }
+.account-type-options > button > svg { grid-area: arrow; color: var(--forest); }
+
+.onboarding-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  padding: 22px 27px 27px;
+}
+
+.onboarding-back {
+  width: fit-content;
+  grid-column: 1 / -1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--forest);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: underline;
+}
+
+.onboarding-form__intro {
+  grid-column: 1 / -1;
+  border-left: 3px solid #c5d9ce;
+  padding: 3px 0 3px 10px;
+}
+
+.onboarding-form__intro > span {
+  color: #547469;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .07em;
+}
+
+.onboarding-form__intro p {
+  margin: 5px 0 0;
+  color: #687872;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.onboarding-form .field-block > span em {
+  color: #8a9691;
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.onboarding-identity {
+  align-content: start;
+  border: 1px solid #e0e8e2;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8faf7;
+}
+
+.onboarding-identity strong { color: var(--forest-deep); font-size: 13px; }
+.onboarding-identity small,
+.field-block > small { color: #76837e; font-size: 10px; line-height: 1.35; }
+
+.onboarding-feedback {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #f9e9e7;
+  color: #914e48;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .account-workspace { padding: 0 27px 27px; }
 
 .workspace-tabs {
@@ -1895,6 +2033,35 @@ select:focus-visible {
 }
 
 .workspace-tabs button.is-active { border-bottom-color: var(--forest); color: var(--forest-deep); }
+
+.account-organization-status {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  border: 1px solid #d8e7dc;
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: #f5faf6;
+}
+
+.account-organization-status > span {
+  color: #58786c;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.account-organization-status p {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+}
+
+.account-organization-status strong { color: var(--forest-deep); font-size: 12px; }
+.account-organization-status small { color: #6b7d75; font-size: 10px; text-align: right; }
 
 .workspace-overview { display: grid; gap: 15px; padding-top: 22px; }
 
@@ -2324,7 +2491,8 @@ select:focus-visible {
   .advanced-filters { padding: 20px 16px; }
   .advanced-filter-grid,
   .publish-form,
-  .offer-form { grid-template-columns: 1fr; gap: 11px; }
+  .offer-form,
+  .onboarding-form { grid-template-columns: 1fr; gap: 11px; }
   .field-block--wide { grid-column: auto; }
   .map-teaser { min-height: 0; padding: 21px 16px; }
   .map-teaser .button { width: 100%; }
@@ -2340,9 +2508,11 @@ select:focus-visible {
   .map-dialog__footer .button { width: 100%; }
   .publish-form { padding: 20px 16px 22px; }
   .offer-form { padding: 20px 16px 22px; }
+  .onboarding-form { padding: 20px 16px 22px; }
   .compact-dialog__actions { flex-direction: column-reverse; }
   .compact-dialog__actions .button { width: 100%; }
   .account-create { padding: 22px 16px; }
+  .account-onboarding { padding: 22px 16px; }
   .account-workspace { padding: 0 16px 20px; }
   .metric-grid { grid-template-columns: 1fr; }
   .analytics-card { align-items: flex-start; flex-direction: column; }

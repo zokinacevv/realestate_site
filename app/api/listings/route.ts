@@ -92,6 +92,12 @@ export async function POST(request: Request) {
     if (reason instanceof Error && reason.message === "ORGANIZATION_REQUIRED") {
       return error("Избери одобрена организација за овој тип објавувач.", 422);
     }
+    if (reason instanceof Error && reason.message === "ONBOARDING_REQUIRED") {
+      return error("Прво заврши го создавањето на профилот.", 409);
+    }
+    if (reason instanceof Error && reason.message === "PUBLISHER_TYPE_MISMATCH") {
+      return error("Типот на огласувач мора да одговара на типот на вашиот профил.", 422);
+    }
     return error("Немаш право да објавуваш во име на оваа организација.", 403);
   }
 

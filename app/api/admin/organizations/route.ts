@@ -25,6 +25,7 @@ export async function GET(request: Request) {
     .orderBy(desc(organizations.updatedAt), desc(organizations.createdAt)).limit(100);
   return json({ organizations: rows.map((row) => ({
     id: row.id, kind: row.kind, displayName: row.displayName, legalName: row.legalName,
+    registrationNumber: row.registrationNumber,
     status: row.status, createdAt: row.createdAt, updatedAt: row.updatedAt,
   })) });
 }

@@ -9,6 +9,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 export type PublisherType = "owner" | "agency" | "developer";
+export type AccountType = "individual" | "agency" | "company";
 export type ListingLifecycle =
   | "draft"
   | "pending"
@@ -32,6 +33,10 @@ export const profiles = sqliteTable(
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
     fullName: text("full_name"),
+    /** Chosen during the first account setup; host identity remains server-owned. */
+    accountType: text("account_type").$type<AccountType>(),
+    phone: text("phone"),
+    onboardingCompletedAt: text("onboarding_completed_at"),
     createdAt: text("created_at").notNull().default(now),
     updatedAt: text("updated_at").notNull().default(now),
   },
@@ -57,6 +62,7 @@ export const organizations = sqliteTable(
     kind: text("kind").$type<OrganizationKind>().notNull(),
     displayName: text("display_name").notNull(),
     legalName: text("legal_name"),
+    registrationNumber: text("registration_number"),
     status: text("status").$type<OrganizationStatus>().notNull().default("pending"),
     createdByUserId: text("created_by_user_id")
       .notNull()
@@ -64,7 +70,10 @@ export const organizations = sqliteTable(
     createdAt: text("created_at").notNull().default(now),
     updatedAt: text("updated_at").notNull().default(now),
   },
-  (table) => [index("organizations_kind_status_idx").on(table.kind, table.status)],
+  (table) => [
+    index("organizations_kind_status_idx").on(table.kind, table.status),
+    uniqueIndex("organizations_registration_number_unique").on(table.registrationNumber),
+  ],
 );
 
 export const organizationMembers = sqliteTable(

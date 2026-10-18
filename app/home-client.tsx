@@ -87,6 +87,7 @@ type PublishForm = {
   propertyType: PropertyType;
   intent: ListingIntent;
   publisherType: PublisherType;
+  organizationId: string;
   price: string;
   areaM2: string;
   address: string;
@@ -104,6 +105,15 @@ type OfferForm = {
   kind: "inquiry" | "offer";
   amount: string;
   message: string;
+};
+
+type AccountType = "individual" | "agency" | "company";
+
+type OnboardingForm = {
+  phone: string;
+  displayName: string;
+  legalName: string;
+  registrationNumber: string;
 };
 
 type AddressSuggestion = { label: string; latitude: number; longitude: number };
@@ -146,6 +156,7 @@ type ApiListing = {
 type OwnerApiListing = ApiListing & {
   addressLine: string;
   exactLocationPublic: boolean;
+  organizationId: string | null;
   status: "pending" | "approved" | "rejected" | "archived";
   moderationNote: string | null;
   submittedAt: string | null;
@@ -157,11 +168,29 @@ type AccountProfile = {
   email: string | null;
   displayName: string | null;
   fullName: string | null;
+  phone: string | null;
+  accountType: AccountType | null;
+  onboardingCompletedAt: string | null;
   createdAt: string | null;
+};
+
+type AccountOrganization = {
+  id: string;
+  kind: "agency" | "developer";
+  displayName: string;
+  legalName: string | null;
+  registrationNumber?: string | null;
+  status: "pending" | "verified" | "suspended";
+  role: "owner" | "editor" | "viewer";
 };
 
 type CurrentUserPayload = {
   profile: AccountProfile;
+  onboarding?: {
+    complete?: boolean;
+    accountType?: AccountType | null;
+  };
+  organizations?: AccountOrganization[];
   permissions?: {
     canModerateListings?: boolean;
   };
@@ -170,7 +199,7 @@ type CurrentUserPayload = {
 type AdminStatus = OwnerApiListing["status"];
 type AdminAccess = "checking" | "granted" | "denied" | "error";
 type OrganizationStatus = "pending" | "verified" | "suspended";
-type AdminOrganization = { id: string; kind: "agency" | "developer"; displayName: string; legalName: string | null; status: OrganizationStatus; createdAt: string; updatedAt: string };
+type AdminOrganization = { id: string; kind: "agency" | "developer"; displayName: string; legalName: string | null; registrationNumber?: string | null; status: OrganizationStatus; createdAt: string; updatedAt: string };
 
 type DashboardData = {
   listings: { total: number; pending: number; approved: number; rejected: number; archived: number };
@@ -212,6 +241,37 @@ const publisherLabels: Record<PublisherFilter, string> = {
   developer: "Инвеститор / градежна фирма",
   owner: "Приватен сопственик",
 };
+
+const accountTypeLabels: Record<AccountType, string> = {
+  individual: "Физичко лице",
+  agency: "Агенција",
+  company: "Фирма / инвеститор",
+};
+
+function publisherTypeForAccountType(accountType: AccountType): PublisherType {
+  if (accountType === "agency") return "agency";
+  if (accountType === "company") return "developer";
+  return "owner";
+}
+
+function organizationKindForPublisher(publisherType: PublisherType): AccountOrganization["kind"] | null {
+  if (publisherType === "agency") return "agency";
+  if (publisherType === "developer") return "developer";
+  return null;
+}
+
+function canPublishWithOrganization(
+  organization: AccountOrganization,
+  publisherType: PublisherType,
+): boolean {
+  const requiredKind = organizationKindForPublisher(publisherType);
+  return (
+    requiredKind !== null &&
+    organization.kind === requiredKind &&
+    organization.status === "verified" &&
+    organization.role !== "viewer"
+  );
+}
 
 const publisherOptions: Array<{ value: PublisherFilter; label: string }> = [
   { value: "all", label: publisherLabels.all },
@@ -262,6 +322,7 @@ function createEmptyPublishForm(): PublishForm {
     propertyType: "Стан",
     intent: "sale",
     publisherType: "owner",
+    organizationId: "",
     price: "",
     areaM2: "",
     address: "",
@@ -278,6 +339,10 @@ function createEmptyPublishForm(): PublishForm {
 
 function createEmptyOfferForm(): OfferForm {
   return { kind: "inquiry", amount: "", message: "" };
+}
+
+function createEmptyOnboardingForm(): OnboardingForm {
+  return { phone: "", displayName: "", legalName: "", registrationNumber: "" };
 }
 
 function formatEuro(value: number) {
@@ -519,6 +584,11 @@ export default function HomeClient() {
   const [accountCreated, setAccountCreated] = useState(false);
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
+  const [accountOrganizations, setAccountOrganizations] = useState<AccountOrganization[]>([]);
+  const [onboardingAccountType, setOnboardingAccountType] = useState<AccountType | null>(null);
+  const [onboardingForm, setOnboardingForm] = useState<OnboardingForm>(createEmptyOnboardingForm);
+  const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
+  const [onboardingError, setOnboardingError] = useState("");
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [ownedListings, setOwnedListings] = useState<OwnerApiListing[]>([]);
   const [favoriteListings, setFavoriteListings] = useState<ApiListing[]>([]);
@@ -552,6 +622,7 @@ export default function HomeClient() {
   const [detailListingId, setDetailListingId] = useState<string | null>(null);
   const [mapFocusId, setMapFocusId] = useState<string | null>(null);
   const adminRequestIdRef = useRef(0);
+  const onboardingBackRef = useRef<HTMLButtonElement | null>(null);
   const favoriteIds = useMemo(
     () => Array.from(new Set([...fixtureFavoriteIds, ...serverFavoriteIds])),
     [fixtureFavoriteIds, serverFavoriteIds],
@@ -589,6 +660,11 @@ export default function HomeClient() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!onboardingAccountType) return;
+    onboardingBackRef.current?.focus();
+  }, [onboardingAccountType]);
 
   useEffect(() => {
     const query = publishForm.address.trim();
@@ -687,6 +763,18 @@ export default function HomeClient() {
   }), [mapPins]);
   const streetMapCenter = mapFilter.center ? mapPointToCoordinates(mapFilter.center) : null;
   const streetMapPolygon = useMemo(() => mapFilter.polygon.map(mapPointToCoordinates), [mapFilter.polygon]);
+  const publishableOrganizations = useMemo(
+    () => accountOrganizations.filter((organization) => (
+      canPublishWithOrganization(organization, publishForm.publisherType)
+    )),
+    [accountOrganizations, publishForm.publisherType],
+  );
+  const hasMatchingPublisherOrganization = useMemo(() => {
+    const requiredKind = organizationKindForPublisher(publishForm.publisherType);
+    return requiredKind !== null && accountOrganizations.some(
+      (organization) => organization.kind === requiredKind && organization.role !== "viewer",
+    );
+  }, [accountOrganizations, publishForm.publisherType]);
 
   function scrollToListings() {
     document.getElementById("oglasi")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -750,9 +838,22 @@ export default function HomeClient() {
         return;
       }
 
-      const profilePayload = (await profileResponse.json()) as { profile: AccountProfile };
+      const profilePayload = (await profileResponse.json()) as CurrentUserPayload;
       setAccountProfile(profilePayload.profile);
-      setAccountCreated(true);
+      setAccountOrganizations(
+        Array.isArray(profilePayload.organizations) ? profilePayload.organizations : [],
+      );
+      const onboardingComplete = profilePayload.onboarding?.complete ?? Boolean(
+        profilePayload.profile.accountType && profilePayload.profile.onboardingCompletedAt,
+      );
+      setAccountCreated(onboardingComplete);
+      if (!onboardingComplete) {
+        setOnboardingForm((current) => ({
+          ...current,
+          phone: current.phone || profilePayload.profile.phone || "",
+        }));
+        return;
+      }
 
       const [listingsResponse, dashboardResponse, favoritesResponse, offersResponse] = await Promise.all([
         fetch("/api/me/listings"),
@@ -790,8 +891,117 @@ export default function HomeClient() {
     }
   }
   function openAccount() {
+    setOnboardingAccountType(null);
+    setOnboardingError("");
     setAccountOpen(true);
     void loadAccount();
+  }
+  async function openPublish() {
+    setEditingListingId(null);
+    setPublishOpen(true);
+    try {
+      const response = await fetch("/api/me");
+      if (response.status === 401 || !response.ok) return;
+
+      const payload = (await response.json()) as CurrentUserPayload;
+      const organizations = Array.isArray(payload.organizations) ? payload.organizations : [];
+      const onboardingComplete = payload.onboarding?.complete ?? Boolean(
+        payload.profile.accountType && payload.profile.onboardingCompletedAt,
+      );
+      setAccountProfile(payload.profile);
+      setAccountOrganizations(organizations);
+      setAccountCreated(onboardingComplete);
+
+      if (!onboardingComplete) {
+        setPublishOpen(false);
+        setOnboardingAccountType(null);
+        setOnboardingError("");
+        setOnboardingForm((current) => ({
+          ...current,
+          phone: current.phone || payload.profile.phone || "",
+        }));
+        setAccountOpen(true);
+        setNotice("Прво изберете тип на профил и пополнете ги основните податоци.");
+        return;
+      }
+
+      if (payload.profile.accountType) {
+        const publisherType = publisherTypeForAccountType(payload.profile.accountType);
+        const organizationId = organizations.find((organization) => (
+          canPublishWithOrganization(organization, publisherType)
+        ))?.id ?? "";
+        setPublishForm((current) => ({ ...current, publisherType, organizationId }));
+      }
+    } catch {
+      // Keep the publish form usable for an unauthenticated visitor; submission
+      // will direct them to sign in as before.
+    }
+  }
+  async function submitOnboarding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!onboardingAccountType) return;
+
+    setOnboardingSubmitting(true);
+    setOnboardingError("");
+    try {
+      const payload = onboardingAccountType === "individual"
+        ? {
+          accountType: onboardingAccountType,
+          phone: onboardingForm.phone.trim(),
+        }
+        : {
+          accountType: onboardingAccountType,
+          phone: onboardingForm.phone.trim(),
+          displayName: onboardingForm.displayName.trim(),
+          legalName: onboardingForm.legalName.trim(),
+          registrationNumber: onboardingForm.registrationNumber.trim(),
+        };
+      const response = await fetch("/api/me/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (response.status === 401) {
+        redirectToSignIn();
+        return;
+      }
+      if (!response.ok) {
+        setOnboardingError(await errorMessage(response, "Профилот не може да се зачува."));
+        return;
+      }
+
+      const result = (await response.json()) as {
+        profile?: AccountProfile;
+        organizations?: AccountOrganization[];
+      };
+      if (result.profile) setAccountProfile(result.profile);
+      if (Array.isArray(result.organizations)) setAccountOrganizations(result.organizations);
+      const defaultPublisherType = publisherTypeForAccountType(onboardingAccountType);
+      const defaultOrganizationKind = organizationKindForPublisher(defaultPublisherType);
+      const defaultOrganizationId = Array.isArray(result.organizations)
+        ? result.organizations.find((organization) => (
+          organization.kind === defaultOrganizationKind &&
+          canPublishWithOrganization(organization, defaultPublisherType)
+        ))?.id ?? ""
+        : "";
+      setPublishForm((current) => ({
+        ...current,
+        publisherType: defaultPublisherType,
+        organizationId: defaultOrganizationId,
+      }));
+      setAccountCreated(true);
+      setOnboardingAccountType(null);
+      setNotice(
+        onboardingAccountType === "individual"
+          ? "Профилот е создаден. Сега можете да зачувувате и објавувате огласи."
+          : "Профилот е создаден. Организацијата чека админ-проверка пред да може да објавува огласи.",
+      );
+      await loadAccount();
+    } catch {
+      setOnboardingError("Профилот не може да се зачува. Обидете се повторно.");
+    } finally {
+      setOnboardingSubmitting(false);
+    }
   }
   function closeAdmin() {
     adminRequestIdRef.current += 1;
@@ -1127,6 +1337,25 @@ export default function HomeClient() {
       setNotice("Внесете до 6 безбедни HTTPS линкови за фотографии.");
       return;
     }
+    if (publishForm.publisherType !== "owner" && !publishForm.organizationId) {
+      setNotice("Изберете одобрена организација за овој тип огласувач.");
+      return;
+    }
+    const selectedOrganization = accountOrganizations.find(
+      (organization) => organization.id === publishForm.organizationId,
+    );
+    if (publishForm.publisherType !== "owner" && !selectedOrganization) {
+      setNotice("Податоците за организацијата не се вчитани. Отворете го „Мој профил“ и обидете се повторно.");
+      return;
+    }
+    if (
+      publishForm.publisherType !== "owner" &&
+      selectedOrganization &&
+      !canPublishWithOrganization(selectedOrganization, publishForm.publisherType)
+    ) {
+      setNotice("Избраната организација нема дозвола за објавување огласи.");
+      return;
+    }
 
     setPublishing(true);
     try {
@@ -1138,6 +1367,7 @@ export default function HomeClient() {
           intent: publishForm.intent,
           propertyType: publishForm.propertyType,
           publisherType: publishForm.publisherType,
+          organizationId: publishForm.publisherType === "owner" ? null : publishForm.organizationId,
           priceAmountCents: Math.round(price * 100),
           currency: "EUR",
           pricePeriod: publishForm.intent === "rent" ? "monthly" : "total",
@@ -1184,6 +1414,7 @@ export default function HomeClient() {
     setPublishForm({
       title: listing.title, propertyType: listing.propertyType as PropertyType, intent: listing.intent,
       publisherType: listing.publisherType, price: String(listing.priceAmountCents / 100),
+      organizationId: listing.organizationId ?? "",
       areaM2: String(listing.areaM2), address: listing.addressLine,
       municipality: listing.municipality ?? "", neighborhood: listing.neighborhood ?? "",
       construction: listing.constructionState, year: listing.builtYear == null ? "" : String(listing.builtYear),
@@ -1214,8 +1445,8 @@ export default function HomeClient() {
             <button type="button" className="doma-nav__button" onClick={() => void openAdmin()}>Админ</button>
           </nav>
           <div className="doma-header__actions">
-            <button className="button button--quiet" type="button" onClick={() => setPublishOpen(true)}>Објави оглас</button>
-            <button className="button button--header" type="button" onClick={openAccount}>{accountCreated ? "Мој профил" : "Најави се"}</button>
+            <button className="button button--quiet" type="button" onClick={() => void openPublish()}>Објави оглас</button>
+            <button className="button button--header" type="button" onClick={openAccount}>{accountCreated ? "Мој профил" : accountProfile ? "Заврши профил" : "Најави се"}</button>
           </div>
           <button className="doma-menu-button" type="button" aria-label={menuOpen ? "Затвори мени" : "Отвори мени"} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? "close" : "menu"} size={22} /></button>
         </div>
@@ -1224,7 +1455,7 @@ export default function HomeClient() {
             <a href="#oglasi" onClick={() => { setMode("sale"); setMenuOpen(false); }}>Купи</a>
             <a href="#oglasi" onClick={() => { setMode("rent"); setMenuOpen(false); }}>Изнајми</a>
             <a href="#partneri" onClick={() => setMenuOpen(false)}>Партнери</a>
-            <button className="button button--primary" type="button" onClick={() => { setPublishOpen(true); setMenuOpen(false); }}>Објави оглас</button>
+            <button className="button button--primary" type="button" onClick={() => { void openPublish(); setMenuOpen(false); }}>Објави оглас</button>
             <button className="button button--ghost-light" type="button" onClick={() => { void openAdmin(); setMenuOpen(false); }}>Админ</button>
           </nav>
         )}
@@ -1303,7 +1534,7 @@ export default function HomeClient() {
         </section>
 
         <section className="doma-cta">
-          <div className="doma-shell doma-cta__inner"><div><p className="eyebrow eyebrow--light">ЗА СОПСТВЕНИЦИ, АГЕНЦИИ И ИНВЕСТИТОРИ</p><h2>Објавете имот со податоци што се навистина корисни.</h2><p>За нов оглас се задолжителни точна цена, адреса, квадратура и статус на градба. Профилот безбедно се врзува со вашата најава.</p></div><div className="doma-cta__actions"><button className="button button--light" type="button" onClick={() => setPublishOpen(true)}>Објавете оглас <Icon name="arrow" size={18} /></button><button className="button button--ghost-light" type="button" onClick={openAccount}>Мој профил</button></div></div>
+          <div className="doma-shell doma-cta__inner"><div><p className="eyebrow eyebrow--light">ЗА СОПСТВЕНИЦИ, АГЕНЦИИ И ИНВЕСТИТОРИ</p><h2>Објавете имот со податоци што се навистина корисни.</h2><p>За нов оглас се задолжителни точна цена, адреса, квадратура и статус на градба. Профилот безбедно се врзува со вашата најава.</p></div><div className="doma-cta__actions"><button className="button button--light" type="button" onClick={() => void openPublish()}>Објавете оглас <Icon name="arrow" size={18} /></button><button className="button button--ghost-light" type="button" onClick={openAccount}>Мој профил</button></div></div>
         </section>
       </main>
 
@@ -1360,7 +1591,8 @@ export default function HomeClient() {
               <label className="field-block field-block--wide"><span>Наслов на оглас</span><input required placeholder="на пр. Трособен стан во Аеродром" value={publishForm.title} onChange={(event) => setPublishForm((current) => ({ ...current, title: event.target.value }))} /></label>
               <label className="field-block"><span>Тип</span><select value={publishForm.propertyType} onChange={(event) => setPublishForm((current) => ({ ...current, propertyType: event.target.value as PropertyType }))}>{propertyTypes.map((type) => <option key={type}>{type}</option>)}</select></label>
               <label className="field-block"><span>Намена</span><select value={publishForm.intent} onChange={(event) => setPublishForm((current) => ({ ...current, intent: event.target.value as ListingIntent }))}><option value="sale">Продажба</option><option value="rent">Изнајмување</option></select></label>
-              <label className="field-block"><span>Кој објавува</span><select value={publishForm.publisherType} onChange={(event) => setPublishForm((current) => ({ ...current, publisherType: event.target.value as PublisherType }))}><option value="owner">Приватен сопственик</option><option value="agency">Агенција</option><option value="developer">Инвеститор / фирма</option></select></label>
+              <label className="field-block"><span>Кој објавува</span><select value={publishForm.publisherType} onChange={(event) => { const publisherType = event.target.value as PublisherType; const matchingOrganization = accountOrganizations.find((organization) => canPublishWithOrganization(organization, publisherType)); setPublishForm((current) => ({ ...current, publisherType, organizationId: matchingOrganization?.id ?? "" })); }}>{(!accountProfile?.accountType || accountProfile.accountType === "individual") && <option value="owner">Приватен сопственик</option>}{(!accountProfile?.accountType || accountProfile.accountType === "agency") && <option value="agency">Агенција</option>}{(!accountProfile?.accountType || accountProfile.accountType === "company") && <option value="developer">Инвеститор / фирма</option>}</select></label>
+              {publishForm.publisherType !== "owner" && <label className="field-block"><span>{publishForm.publisherType === "agency" ? "Агенција" : "Фирма / инвеститор"}</span><select required value={publishForm.organizationId} onChange={(event) => setPublishForm((current) => ({ ...current, organizationId: event.target.value }))}><option value="">Изберете организација</option>{publishableOrganizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName + " · потврдена"}</option>)}</select>{publishableOrganizations.length === 0 && <small>{hasMatchingPublisherOrganization ? "Организацијата сè уште чека проверка или е суспендирана." : "Немате дозвола за потврдена организација од овој тип."}</small>}</label>}
               <label className="field-block"><span>Точна цена во €</span><input required min="1" type="number" inputMode="decimal" placeholder="на пр. 142000" value={publishForm.price} onChange={(event) => setPublishForm((current) => ({ ...current, price: event.target.value }))} /></label>
               <label className="field-block"><span>Квадратура во m²</span><input required min="1" step="1" type="number" inputMode="numeric" placeholder="на пр. 74" value={publishForm.areaM2} onChange={(event) => setPublishForm((current) => ({ ...current, areaM2: event.target.value }))} /></label>
               <label className="field-block field-block--wide"><span>Точна адреса</span><input required autoComplete="street-address" placeholder="почнете да пишувате улица и број" value={publishForm.address} onChange={(event) => { setPublishForm((current) => ({ ...current, address: event.target.value })); setAddressSuggestions([]); setAddressSearching(false); }} />{addressSearching && <small className="address-searching">Се бара адреса…</small>}{publishForm.address.trim().length >= 3 && addressSuggestions.length > 0 && <div className="address-suggestions" role="listbox" aria-label="Предлози за адреса">{addressSuggestions.map((suggestion) => <button type="button" role="option" aria-selected="false" key={suggestion.label + suggestion.latitude} onClick={() => { setPublishForm((current) => ({ ...current, address: suggestion.label, latitude: String(suggestion.latitude), longitude: String(suggestion.longitude) })); setAddressSuggestions([]); }}>{suggestion.label}</button>)}</div>}</label>
@@ -1410,15 +1642,36 @@ export default function HomeClient() {
             <header className="compact-dialog__header">
               <div>
                 <p>МОЈА DOMA</p>
-                <h2 id="account-title">{accountLoading ? "Го вчитуваме вашиот профил." : accountCreated ? "Вашиот работен преглед" : "Најавете се за да продолжите."}</h2>
-                {accountCreated && accountProfile && <span>{accountProfile.displayName ?? accountProfile.fullName ?? "Ваш профил"}</span>}
+                <h2 id="account-title">{accountLoading ? "Го вчитуваме вашиот профил." : !accountProfile ? "Најавете се за да продолжите." : !accountCreated ? onboardingAccountType ? "Пополнете ги податоците" : "Каков профил креирате?" : "Вашиот работен преглед"}</h2>
+                {accountCreated && accountProfile && <span>{accountProfile.displayName ?? accountProfile.fullName ?? "Ваш профил"}{accountProfile.accountType ? " · " + accountTypeLabels[accountProfile.accountType] : ""}</span>}
               </div>
               <button className="dialog-close" type="button" aria-label="Затвори профил" onClick={() => setAccountOpen(false)}><Icon name="close" size={19} /></button>
             </header>
             {accountLoading ? (
               <div className="account-create"><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Ги вчитуваме вашите огласи, понуди и омилени.</p></div>
-            ) : !accountCreated ? (
+            ) : !accountProfile ? (
               <div className="account-create"><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Вашиот профил безбедно се поврзува со ChatGPT најава. Не внесуваме име или е-пошта во формата.</p><button className="button button--primary" type="button" onClick={() => void loadAccount()}>Продолжи со најава <Icon name="arrow" size={18} /></button></div>
+            ) : !accountCreated ? (
+              onboardingAccountType ? (
+                <form className="onboarding-form" onSubmit={submitOnboarding}>
+                  <button ref={onboardingBackRef} className="onboarding-back" type="button" onClick={() => { setOnboardingAccountType(null); setOnboardingError(""); }}>← Избери друг тип</button>
+                  <div className="onboarding-form__intro field-block--wide"><span>ЧЕКОР 2 ОД 2 · {accountTypeLabels[onboardingAccountType]}</span><p>{onboardingAccountType === "individual" ? "Оставете телефон за контакт. Вашите име и е-пошта остануваат безбедно поврзани со ChatGPT најава." : "Внесете ги основните податоци. Организацијата ќе биде испратена на админ-проверка."}</p></div>
+                  <label className="field-block"><span>Телефон за контакт</span><input required type="tel" autoComplete="tel" minLength={7} maxLength={32} placeholder="на пр. +389 70 123 456" value={onboardingForm.phone} onChange={(event) => setOnboardingForm((current) => ({ ...current, phone: event.target.value }))} /></label>
+                  {onboardingAccountType === "individual" ? <div className="onboarding-identity field-block"><span>Потврдена најава</span><strong>{accountProfile.displayName ?? accountProfile.fullName ?? accountProfile.email ?? "Ваш профил"}</strong><small>Името и е-поштата ги преземаме од ChatGPT и не ги менуваме во оваа форма.</small></div> : <><label className="field-block"><span>{onboardingAccountType === "agency" ? "Назив на агенцијата" : "Назив на фирмата"}</span><input required minLength={2} maxLength={120} autoComplete="organization" placeholder={onboardingAccountType === "agency" ? "на пр. DOMA Агент" : "на пр. DOMA Инвест"} value={onboardingForm.displayName} onChange={(event) => setOnboardingForm((current) => ({ ...current, displayName: event.target.value }))} /></label><label className="field-block"><span>Правно име <em>(ако е различно)</em></span><input maxLength={180} autoComplete="organization" placeholder="на пр. ДООЕЛ DOMA Инвест" value={onboardingForm.legalName} onChange={(event) => setOnboardingForm((current) => ({ ...current, legalName: event.target.value }))} /></label><label className="field-block"><span>ЕМБС / регистарски број</span><input required minLength={5} maxLength={40} placeholder="на пр. 1234567" value={onboardingForm.registrationNumber} onChange={(event) => setOnboardingForm((current) => ({ ...current, registrationNumber: event.target.value }))} /></label></>}
+                  <p className="form-helper">{onboardingAccountType === "individual" ? "Телефонот се користи само за контакт околу вашите огласи и не се прикажува јавно." : "По одобрување, ќе може да избирате организација кога објавувате оглас."}</p>
+                  {onboardingError && <p className="onboarding-feedback" role="alert">{onboardingError}</p>}
+                  <div className="compact-dialog__actions"><button className="button button--outline" type="button" onClick={() => setAccountOpen(false)} disabled={onboardingSubmitting}>Откажи</button><button className="button button--primary" type="submit" disabled={onboardingSubmitting}>{onboardingSubmitting ? "Се зачувува…" : "Создај профил"} <Icon name="arrow" size={18} /></button></div>
+                </form>
+              ) : (
+                <div className="account-onboarding">
+                  <div className="account-onboarding__intro"><span className="account-create__icon"><Icon name="user" size={28} /></span><p>Прво изберете го типот на профил. Потоа ќе ви прикажеме кратка форма со потребните податоци.</p></div>
+                  <div className="account-type-options" role="group" aria-label="Тип на профил">
+                    <button type="button" onClick={() => { setOnboardingAccountType("individual"); setOnboardingError(""); setOnboardingForm((current) => ({ ...current, phone: current.phone || accountProfile.phone || "" })); }}><span className="account-type-options__icon"><Icon name="user" size={22} /></span><strong>Физичко лице</strong><small>Објавувајте како приватен сопственик.</small><Icon name="arrow" size={17} /></button>
+                    <button type="button" onClick={() => { setOnboardingAccountType("agency"); setOnboardingError(""); setOnboardingForm((current) => ({ ...current, phone: current.phone || accountProfile.phone || "" })); }}><span className="account-type-options__icon"><Icon name="building" size={22} /></span><strong>Агенција</strong><small>Креирајте агенција што ќе помине админ-проверка.</small><Icon name="arrow" size={17} /></button>
+                    <button type="button" onClick={() => { setOnboardingAccountType("company"); setOnboardingError(""); setOnboardingForm((current) => ({ ...current, phone: current.phone || accountProfile.phone || "" })); }}><span className="account-type-options__icon"><Icon name="building" size={22} /></span><strong>Фирма / инвеститор</strong><small>Креирајте профил за фирма или градежен инвеститор.</small><Icon name="arrow" size={17} /></button>
+                  </div>
+                </div>
+              )
             ) : (
               <div className="account-workspace">
                 <nav className="workspace-tabs" aria-label="Делови од профилот">
@@ -1427,8 +1680,9 @@ export default function HomeClient() {
                   <button className={accountTab === "offers" ? "is-active" : ""} type="button" onClick={() => setAccountTab("offers")}>Понуди</button>
                   <button className={accountTab === "saved" ? "is-active" : ""} type="button" onClick={() => setAccountTab("saved")}>Омилени</button>
                 </nav>
+                {accountProfile.accountType && accountProfile.accountType !== "individual" && <div className="account-organization-status"><span>{accountTypeLabels[accountProfile.accountType]}</span>{accountOrganizations.map((organization) => <p key={organization.id}><strong>{organization.displayName}</strong><small>{organization.status === "verified" ? "Потврдена — може да објавува огласи" : organization.status === "pending" ? "Чека админ-проверка" : "Суспендирана"}</small></p>)}</div>}
                 {accountTab === "overview" && <div className="workspace-overview"><div className="metric-grid"><article><span>Мои огласи</span><strong>{dashboard?.listings.total ?? ownedListings.length}</strong><small>во вашиот профил</small></article><article><span>Прегледи</span><strong>{dashboard?.views.total ?? 0}</strong><small>единствени дневни посети</small></article><article><span>Нови понуди</span><strong>{dashboard?.offers.incoming ?? accountOffers.filter((offer) => offer.direction === "incoming").length}</strong><small>примени понуди</small></article><article><span>Зачувани</span><strong>{dashboard?.favorites ?? serverFavoriteIds.length}</strong><small>омилени огласи</small></article></div><div className="analytics-card"><div><span>Активност во последни 30 дена</span><strong>{dashboard?.views.last30Days ?? 0} единствени прегледи</strong><small>Се бројат само одобрени огласи и најмногу една посета по оглас дневно.</small></div>{dashboard?.activity.length ? <div className="bar-chart bar-chart--live" aria-label="Прегледи на најгледаните ваши огласи">{dashboard.activity.map((item) => <i key={item.listingId} title={item.title + ": " + item.views + " прегледи"} style={{ height: Math.max(18, Math.round((item.views / Math.max(...dashboard.activity.map((row) => row.views), 1)) * 100)) + "%" }} />)}</div> : <p className="analytics-card__empty">Кога ќе има прегледи на ваши огласи, ќе се појават тука.</p>}</div>{dashboard?.activity.length ? <div className="activity-list">{dashboard.activity.slice(0, 3).map((item) => <p key={item.listingId}><span>{item.title}</span><strong>{item.views} прегледи · {item.incomingOffers} понуди</strong></p>)}</div> : null}</div>}
-                {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)} · <button type="button" onClick={() => openEditListing(listing)}>Уреди</button></span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); setPublishOpen(true); }}>Објавете еден</button>.</p>}</div>}
+                {accountTab === "listings" && <div className="workspace-list"><strong>Мои огласи</strong>{ownedListings.length ? ownedListings.map((listing) => <p key={listing.id}>{listing.title}<span>{ownerStatusLabel(listing.status)} · <button type="button" onClick={() => openEditListing(listing)}>Уреди</button></span></p>) : <p>Сè уште немате објавен оглас. <button type="button" onClick={() => { setAccountOpen(false); void openPublish(); }}>Објавете еден</button>.</p>}</div>}
                 {accountTab === "offers" && <div className="workspace-list"><strong>Понуди и пораки</strong>{accountOffers.length ? accountOffers.map((offer) => <article className="offer-row" key={offer.id}><div><span>{offer.direction === "incoming" ? "Примена" : "Испратена"} {offer.kind === "offer" ? "понуда" : "порака"}</span><p>{offer.message}</p><small>{offer.listingTitle}{offer.amountCents ? " · " + formatEuro(offer.amountCents / 100) : ""}</small></div><div className="offer-row__side"><em className={`offer-status offer-status--${offer.status}`}>{offer.status === "sent" ? "Во очекување" : offer.status === "accepted" ? "Прифатена" : offer.status === "declined" ? "Одбиена" : "Повлечена"}</em>{offer.status === "sent" && (offer.direction === "incoming" ? <div className="offer-row__actions"><button type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "accepted")}>Прифати</button><button className="offer-row__decline" type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "declined")}>Одбиј</button></div> : <button type="button" disabled={offerMutatingId === offer.id} onClick={() => void updateOfferStatus(offer.id, "withdrawn")}>{offerMutatingId === offer.id ? "Се зачувува…" : "Повлечи"}</button>)}</div></article>) : <p>Сè уште нема понуди или пораки.</p>}</div>}
                 {accountTab === "saved" && <div className="workspace-list"><strong>Омилени огласи</strong>{favoriteListings.length ? favoriteListings.map((listing) => <p key={listing.id}>{listing.title}<span>{listing.city}</span></p>) : <p>{fixtureFavoriteIds.length ? fixtureFavoriteIds.length + " демо огласи се зачувани само во оваа сесија." : "Зачувајте оглас со срцето за да се појави тука."}</p>}</div>}
               </div>
@@ -1465,7 +1719,7 @@ export default function HomeClient() {
                 {adminLoading ? <p className="admin-empty">Се вчитуваат огласите…</p> : adminListings.length ? adminListings.map((listing) => <article className="admin-row" key={listing.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + listing.status}>{ownerStatusLabel(listing.status)}</span><strong>{listing.title}</strong><small>{formatEuro(listing.priceAmountCents / 100) + " · " + listing.addressLine}</small></div><div className="admin-row__actions">{listing.status === "pending" && <button type="button" disabled={adminMutatingListingId !== null} onClick={() => void moderateListing(listing.id, "approved")}>{adminMutatingListingId === listing.id ? "Се зачувува…" : "Одобри"}</button>}{listing.status === "pending" && <button type="button" className="admin-row__reject" disabled={adminMutatingListingId !== null} onClick={() => void moderateListing(listing.id, "rejected")}>Одбиј</button>}{listing.status !== "archived" && <button type="button" className="admin-row__delete" disabled={adminMutatingListingId !== null} aria-label="Архивирај оглас" onClick={() => void moderateListing(listing.id, "archived")}><Icon name="trash" size={16} /></button>}</div></article>) : <p className="admin-empty">Нема огласи со овој статус.</p>}
               </div>
               </>}
-              {adminSection === "organizations" && <><div className="admin-filter-bar" role="group" aria-label="Статус на организации">{(["pending", "verified", "suspended"] as const).map((status) => <button key={status} className={organizationFilter === status ? "is-active" : ""} type="button" disabled={adminLoading || adminMutatingOrganizationId !== null} onClick={() => void loadAdminOrganizations(status)}>{status === "pending" ? "Чека проверка" : status === "verified" ? "Потврдени" : "Суспендирани"}</button>)}</div><div className="admin-list">{adminLoading ? <p className="admin-empty">Се вчитуваат организациите…</p> : adminOrganizations.length ? adminOrganizations.map((organization) => <article className="admin-row" key={organization.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + organization.status}>{organization.status === "pending" ? "Чека проверка" : organization.status === "verified" ? "Потврдена" : "Суспендирана"}</span><strong>{organization.displayName}</strong><small>{organization.kind === "agency" ? "Агенција за недвижности" : "Инвеститор / градежна фирма"}{organization.legalName ? " · " + organization.legalName : ""}</small></div><div className="admin-row__actions">{organization.status !== "verified" && <button type="button" disabled={adminMutatingOrganizationId !== null} onClick={() => void moderateOrganization(organization.id, "verified")}>{adminMutatingOrganizationId === organization.id ? "Се зачувува…" : "Потврди"}</button>}{organization.status !== "suspended" && <button className="admin-row__reject" type="button" disabled={adminMutatingOrganizationId !== null} onClick={() => void moderateOrganization(organization.id, "suspended")}>Суспендирај</button>}</div></article>) : <p className="admin-empty">Нема организации со овој статус.</p>}</div></>}
+              {adminSection === "organizations" && <><div className="admin-filter-bar" role="group" aria-label="Статус на организации">{(["pending", "verified", "suspended"] as const).map((status) => <button key={status} className={organizationFilter === status ? "is-active" : ""} type="button" disabled={adminLoading || adminMutatingOrganizationId !== null} onClick={() => void loadAdminOrganizations(status)}>{status === "pending" ? "Чека проверка" : status === "verified" ? "Потврдени" : "Суспендирани"}</button>)}</div><div className="admin-list">{adminLoading ? <p className="admin-empty">Се вчитуваат организациите…</p> : adminOrganizations.length ? adminOrganizations.map((organization) => <article className="admin-row" key={organization.id}><div className="admin-row__meta"><span className={"status-pill status-pill--" + organization.status}>{organization.status === "pending" ? "Чека проверка" : organization.status === "verified" ? "Потврдена" : "Суспендирана"}</span><strong>{organization.displayName}</strong><small>{organization.kind === "agency" ? "Агенција за недвижности" : "Инвеститор / градежна фирма"}{organization.legalName ? " · " + organization.legalName : ""}{organization.registrationNumber ? " · ЕМБС " + organization.registrationNumber : ""}</small></div><div className="admin-row__actions">{organization.status !== "verified" && <button type="button" disabled={adminMutatingOrganizationId !== null} onClick={() => void moderateOrganization(organization.id, "verified")}>{adminMutatingOrganizationId === organization.id ? "Се зачувува…" : "Потврди"}</button>}{organization.status !== "suspended" && <button className="admin-row__reject" type="button" disabled={adminMutatingOrganizationId !== null} onClick={() => void moderateOrganization(organization.id, "suspended")}>Суспендирај</button>}</div></article>) : <p className="admin-empty">Нема организации со овој статус.</p>}</div></>}
             </>}
             {adminAccess === "checking" && adminError && <p className="admin-feedback">{adminError}</p>}
           </section>
